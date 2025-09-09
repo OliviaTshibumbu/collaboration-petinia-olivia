@@ -1,13 +1,12 @@
 from kivymd.app import MDApp
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.gridlayout import MDGridLayout
 from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
-from kivymd.uix.button import MDRaisedButton, MDIconButton, MDFloatingActionButton
+from kivymd.uix.button import MDRaisedButton
 from kivymd.uix.card import MDCard
-from kivymd.uix.list import MDList, OneLineListItem, TwoLineListItem, ThreeLineListItem
+from kivymd.uix.list import MDList, TwoLineListItem, ThreeLineListItem
 from kivymd.uix.toolbar import MDTopAppBar
 from kivymd.uix.screenmanager import MDScreenManager
 from kivymd.uix.bottomnavigation import MDBottomNavigation, MDBottomNavigationItem
@@ -15,17 +14,10 @@ from kivymd.uix.dialog import MDDialog
 from kivymd.uix.snackbar import Snackbar
 
 from kivy.clock import Clock
-from kivy.utils import platform
 from kivy.storage.jsonstore import JsonStore
-from kivy.network.urlrequest import UrlRequest
 
-import os
-import json
-from datetime import datetime, timedelta
-import threading
 import random
-import re
-from collections import Counter
+from datetime import datetime
 
 
 class StudyHelperApp(MDApp):
@@ -33,450 +25,410 @@ class StudyHelperApp(MDApp):
         super().__init__(**kwargs)
         self.title = "StudyHelper"
         
-        # Configuration
-        self.api_key = ""
-        self.email_config = {
-            'smtp_server': 'smtp.gmail.com',
-            'smtp_port': 587,
-            'email': '',
-            'password': ''
-        }
-        
-        # Données - CORRECTION 1: Initialisation propre
-        self.notes_liste = []
-        self.note_actuelle = None
-        self.rappels_liste = []
+        # Variables principales
+        self.notes = []
+        self.note_en_cours = None
+        self.rappels = []
         self.matieres = {}
-        self.sessions_etude = []
-        self.session_actuelle = None
-        self.temps_debut_session = None
-        self.notes_filtrees = []
+        self.sessions = []
+        self.session_active = None
+        self.debut_session = None
+        self.notes_trouvees = []
         
-        # Stockage
-        self.store = None
-        self.init_storage()
+        # Stockage des données
+        self.store = JsonStore('studyhelper.json')
+        self.charger_donnees()
         
-        # UI elements
+        # Variables pour les dialogues
         self.dialog = None
-        self.menu = None
         
-        # Quiz data
-        self.quiz_questions = []
-        self.quiz_actuel = None
-        self.quiz_score = 0
-        self.quiz_question_index = 0
-        self.quiz_nombre_questions = 3  # Par défaut
+        # Variables pour les quiz
+        self.questions_quiz = []
+        self.score_quiz = 0
+        self.question_actuelle = 0
+        self.nb_questions = 5
 
     def build(self):
-        """Construit l'interface principale"""
+        # Configuration de l'app
         self.theme_cls.primary_palette = "Blue"
         self.theme_cls.theme_style = "Light"
         
-        # Screen Manager
+        # Créer l'écran principal
         self.screen_manager = MDScreenManager()
-        
-        # Écran principal
         screen = MDScreen(name="main")
         
         # Layout principal
-        main_layout = MDBoxLayout(orientation="vertical")
+        layout_principal = MDBoxLayout(orientation="vertical")
         
-        # Toolbar
-        toolbar = MDTopAppBar(
-            title="StudyHelper",
-            elevation=2
-        )
-        main_layout.add_widget(toolbar)
+        # Barre du haut
+        toolbar = MDTopAppBar(title="StudyHelper", elevation=2)
+        layout_principal.add_widget(toolbar)
         
-        # Bottom Navigation
-        bottom_nav = MDBottomNavigation()
+        # Navigation du bas
+        navigation = MDBottomNavigation()
         
         # Onglet Notes
-        notes_item = MDBottomNavigationItem(
-            name="notes",
-            text="Notes",
-            icon="note-text"
+        onglet_notes = MDBottomNavigationItem(
+            name="notes", text="Notes", icon="note-text"
         )
-        notes_item.add_widget(self.create_notes_tab())
-        bottom_nav.add_widget(notes_item)
+        onglet_notes.add_widget(self.creer_onglet_notes())
+        navigation.add_widget(onglet_notes)
         
         # Onglet Éditeur
-        editor_item = MDBottomNavigationItem(
-            name="editor", 
-            text="Éditeur",
-            icon="pencil"
+        onglet_editeur = MDBottomNavigationItem(
+            name="editor", text="Éditeur", icon="pencil"
         )
-        editor_item.add_widget(self.create_editor_tab())
-        bottom_nav.add_widget(editor_item)
+        onglet_editeur.add_widget(self.creer_onglet_editeur())
+        navigation.add_widget(onglet_editeur)
         
         # Onglet Rappels
-        reminders_item = MDBottomNavigationItem(
-            name="reminders",
-            text="Rappels", 
-            icon="bell"
+        onglet_rappels = MDBottomNavigationItem(
+            name="reminders", text="Rappels", icon="bell"
         )
-        reminders_item.add_widget(self.create_reminders_tab())
-        bottom_nav.add_widget(reminders_item)
+        onglet_rappels.add_widget(self.creer_onglet_rappels())
+        navigation.add_widget(onglet_rappels)
         
-        # Onglet Évolution
-        evolution_item = MDBottomNavigationItem(
-            name="evolution",
-            text="Évolution",
-            icon="chart-line"
+        # Onglet Stats
+        onglet_stats = MDBottomNavigationItem(
+            name="stats", text="Stats", icon="chart-line"
         )
-        evolution_item.add_widget(self.create_evolution_tab())
-        bottom_nav.add_widget(evolution_item)
+        onglet_stats.add_widget(self.creer_onglet_stats())
+        navigation.add_widget(onglet_stats)
         
-        main_layout.add_widget(bottom_nav)
-        screen.add_widget(main_layout)
+        layout_principal.add_widget(navigation)
+        screen.add_widget(layout_principal)
         self.screen_manager.add_widget(screen)
         
         return self.screen_manager
 
-    def create_notes_tab(self):
-        """Crée l'onglet des notes - CORRECTION AFFICHAGE"""
+    def creer_onglet_notes(self):
+        # Layout pour l'onglet des notes
         layout = MDBoxLayout(orientation="vertical", padding="10dp", spacing="10dp")
         
-        # Recherche
-        self.search_field = MDTextField(
+        # Zone de recherche
+        self.champ_recherche = MDTextField(
             hint_text="Rechercher...",
             size_hint_y=None,
             height="48dp"
         )
-        self.search_field.bind(text=self.filter_notes)
-        layout.add_widget(self.search_field)
+        self.champ_recherche.bind(text=self.rechercher_notes)
+        layout.add_widget(self.champ_recherche)
         
         # Boutons
-        buttons_layout = MDBoxLayout(
+        boutons = MDBoxLayout(
             orientation="horizontal",
             spacing="10dp", 
             size_hint_y=None,
             height="48dp"
         )
         
-        new_note_btn = MDRaisedButton(text="Nouvelle Note")
-        new_note_btn.bind(on_release=self.nouvelle_note)
-        buttons_layout.add_widget(new_note_btn)
+        btn_nouvelle = MDRaisedButton(text="Nouvelle Note")
+        btn_nouvelle.bind(on_release=self.nouvelle_note)
+        boutons.add_widget(btn_nouvelle)
         
-        clear_search_btn = MDRaisedButton(text="Effacer")
-        clear_search_btn.bind(on_release=self.effacer_recherche)
-        buttons_layout.add_widget(clear_search_btn)
+        btn_effacer = MDRaisedButton(text="Effacer")
+        btn_effacer.bind(on_release=self.effacer_recherche)
+        boutons.add_widget(btn_effacer)
         
-        layout.add_widget(buttons_layout)
+        layout.add_widget(boutons)
         
         # Liste des notes
         scroll = MDScrollView()
-        self.notes_list = MDList()
-        scroll.add_widget(self.notes_list)
+        self.liste_notes = MDList()
+        scroll.add_widget(self.liste_notes)
         layout.add_widget(scroll)
         
-        self.update_notes_list()
+        self.mettre_a_jour_notes()
         return layout
 
-    def create_editor_tab(self):
-        """Crée l'onglet éditeur"""
+    def creer_onglet_editeur(self):
+        # Layout pour l'éditeur
         layout = MDBoxLayout(orientation="vertical", padding="10dp", spacing="10dp")
         
-        # Titre
-        self.title_field = MDTextField(
+        # Champ titre
+        self.champ_titre = MDTextField(
             hint_text="Titre de la note",
             size_hint_y=None,
             height="48dp"
         )
-        layout.add_widget(self.title_field)
+        layout.add_widget(self.champ_titre)
         
-        # Contenu - CORRECTION SIMPLE POUR CONTENIR LE TEXTE
-        content_card = MDCard(
+        # Champ contenu
+        carte_contenu = MDCard(
             elevation=2,
             padding="10dp",
             size_hint_y=None,
             height="400dp"
         )
         
-        # Scroll pour le contenu de l'éditeur
-        content_scroll = MDScrollView()
+        scroll_contenu = MDScrollView()
         
-        self.content_field = MDTextField(
+        self.champ_contenu = MDTextField(
             hint_text="Contenu de la note...",
             multiline=True,
             size_hint_y=None,
-            height="350dp"  # Hauteur fixe pour éviter les débordements
+            height="350dp"
         )
         
-        content_scroll.add_widget(self.content_field)
-        content_card.add_widget(content_scroll)
-        layout.add_widget(content_card)
+        scroll_contenu.add_widget(self.champ_contenu)
+        carte_contenu.add_widget(scroll_contenu)
+        layout.add_widget(carte_contenu)
         
         # Boutons d'action
-        buttons_layout = MDBoxLayout(
+        boutons_action = MDBoxLayout(
             orientation="horizontal",
             spacing="10dp",
             size_hint_y=None,
             height="48dp"
         )
         
-        save_btn = MDRaisedButton(text="Sauvegarder")
-        save_btn.bind(on_release=self.sauvegarder_note)
-        buttons_layout.add_widget(save_btn)
+        btn_sauver = MDRaisedButton(text="Sauvegarder")
+        btn_sauver.bind(on_release=self.sauvegarder_note)
+        boutons_action.add_widget(btn_sauver)
         
-        delete_btn = MDRaisedButton(text="Supprimer")
-        delete_btn.bind(on_release=self.supprimer_note_dialog)
-        buttons_layout.add_widget(delete_btn)
+        btn_supprimer = MDRaisedButton(text="Supprimer")
+        btn_supprimer.bind(on_release=self.supprimer_note)
+        boutons_action.add_widget(btn_supprimer)
         
-        share_btn = MDRaisedButton(text="Partager")
-        share_btn.bind(on_release=self.partager_note_dialog)
-        buttons_layout.add_widget(share_btn)
-        
-        layout.add_widget(buttons_layout)
+        layout.add_widget(boutons_action)
         
         # Boutons outils
-        tools_layout = MDBoxLayout(
+        boutons_outils = MDBoxLayout(
             orientation="horizontal",
             spacing="10dp",
             size_hint_y=None,
             height="48dp"
         )
         
-        quiz_btn = MDRaisedButton(text="Quiz")
-        quiz_btn.bind(on_release=self.config_quiz_dialog)  # CORRECTION QUIZ
-        tools_layout.add_widget(quiz_btn)
+        btn_quiz = MDRaisedButton(text="Quiz")
+        btn_quiz.bind(on_release=self.creer_quiz)
+        boutons_outils.add_widget(btn_quiz)
         
-        resume_btn = MDRaisedButton(text="Résumé")
-        resume_btn.bind(on_release=self.resumer_texte_intelligent) 
-        tools_layout.add_widget(resume_btn)
+        btn_resume = MDRaisedButton(text="Résumé")
+        btn_resume.bind(on_release=self.faire_resume)
+        boutons_outils.add_widget(btn_resume)
         
-        config_btn = MDRaisedButton(text="Config API")
-        config_btn.bind(on_release=self.ouvrir_config_api)
-        tools_layout.add_widget(config_btn)
-        
-        layout.add_widget(tools_layout)
+        layout.add_widget(boutons_outils)
         
         return layout
 
-    def create_reminders_tab(self):
-        """Crée l'onglet des rappels"""
+    def creer_onglet_rappels(self):
+        # Layout pour les rappels
         layout = MDBoxLayout(orientation="vertical", padding="10dp", spacing="10dp")
         
         # Titre
-        title_label = MDLabel(
+        titre = MDLabel(
             text="Mes Rappels",
             theme_text_color="Primary",
             font_style="H5",
             size_hint_y=None,
             height="40dp"
         )
-        layout.add_widget(title_label)
+        layout.add_widget(titre)
         
-        # Bouton nouveau rappel
-        add_btn = MDRaisedButton(
-            text="Nouveau Rappel",
+        # Boutons
+        boutons = MDBoxLayout(
+            orientation="horizontal",
+            spacing="10dp",
             size_hint_y=None,
             height="48dp"
         )
-        add_btn.bind(on_release=self.ajouter_rappel_dialog)
-        layout.add_widget(add_btn)
+        
+        btn_nouveau = MDRaisedButton(text="Nouveau Rappel")
+        btn_nouveau.bind(on_release=self.nouveau_rappel)
+        boutons.add_widget(btn_nouveau)
+        
+        btn_verifier = MDRaisedButton(text="Vérifier")
+        btn_verifier.bind(on_release=self.verifier_rappels_manuel)
+        boutons.add_widget(btn_verifier)
+        
+        layout.add_widget(boutons)
         
         # Liste des rappels
         scroll = MDScrollView()
-        self.reminders_list = MDList()
-        scroll.add_widget(self.reminders_list)
+        self.liste_rappels = MDList()
+        scroll.add_widget(self.liste_rappels)
         layout.add_widget(scroll)
         
-        self.update_reminders_list()
+        self.mettre_a_jour_rappels()
         return layout
 
-    def create_evolution_tab(self):
-        """Crée l'onglet évolution"""
+    def verifier_rappels_manuel(self, *args):
+        # Vérification simple quand on clique sur le bouton
+        maintenant = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rappels_actuels = []
+        
+        for rappel in self.rappels:
+            if rappel.get('active', True):
+                # Vérification très simple - juste comparer les strings
+                if rappel['date'] <= maintenant:
+                    rappels_actuels.append(rappel['titre'])
+                    rappel['active'] = False  # Marquer comme lu
+        
+        if rappels_actuels:
+            message = f"Rappels actuels: {', '.join(rappels_actuels)}"
+            self.afficher_message(message)
+            self.sauvegarder_donnees()
+            self.mettre_a_jour_rappels()
+        else:
+            self.afficher_message("Aucun rappel pour le moment")
+
+    def creer_onglet_stats(self):
+        # Layout pour les statistiques
         layout = MDBoxLayout(orientation="vertical", padding="10dp", spacing="10dp")
         
-        # Session actuelle
-        session_card = MDCard(
+        # Section session active
+        carte_session = MDCard(
             elevation=2,
             padding="15dp",
             size_hint_y=None,
             height="120dp"
         )
         
-        session_layout = MDBoxLayout(orientation="vertical", spacing="10dp")
+        layout_session = MDBoxLayout(orientation="vertical", spacing="10dp")
         
-        self.session_label = MDLabel(
+        self.label_session = MDLabel(
             text="Aucune session active",
             theme_text_color="Primary",
             font_style="Subtitle1"
         )
-        session_layout.add_widget(self.session_label)
+        layout_session.add_widget(self.label_session)
         
-        session_buttons = MDBoxLayout(
+        boutons_session = MDBoxLayout(
             orientation="horizontal",
             spacing="10dp",
             size_hint_y=None,
             height="48dp"
         )
         
-        start_btn = MDRaisedButton(text="Démarrer Session")
-        start_btn.bind(on_release=self.demander_nouvelle_session)
-        session_buttons.add_widget(start_btn)
+        btn_start = MDRaisedButton(text="Démarrer Session")
+        btn_start.bind(on_release=self.demarrer_session)
+        boutons_session.add_widget(btn_start)
         
-        stop_btn = MDRaisedButton(text="Terminer")
-        stop_btn.bind(on_release=self.terminer_session_etude)
-        session_buttons.add_widget(stop_btn)
+        btn_stop = MDRaisedButton(text="Terminer")
+        btn_stop.bind(on_release=self.terminer_session)
+        boutons_session.add_widget(btn_stop)
         
-        session_layout.add_widget(session_buttons)
-        session_card.add_widget(session_layout)
-        layout.add_widget(session_card)
+        layout_session.add_widget(boutons_session)
+        carte_session.add_widget(layout_session)
+        layout.add_widget(carte_session)
         
-        # Statistiques - MODIFICATION POUR INCLURE LES QUIZ
-        stats_card = MDCard(
+        # Section statistiques
+        carte_stats = MDCard(
             elevation=2,
             padding="15dp",
             size_hint_y=None,
-            height="200dp"  # Augmenté pour plus d'espace
+            height="200dp"
         )
         
-        stats_layout = MDBoxLayout(orientation="vertical", spacing="5dp")
+        layout_stats = MDBoxLayout(orientation="vertical", spacing="5dp")
         
-        stats_title = MDLabel(text="Statistiques", font_style="H6")
-        stats_layout.add_widget(stats_title)
+        titre_stats = MDLabel(text="Statistiques", font_style="H6")
+        layout_stats.add_widget(titre_stats)
         
-        self.temps_label = MDLabel(text="Temps total: 0 min")
-        self.sessions_label = MDLabel(text="Sessions: 0") 
-        self.matieres_label = MDLabel(text="Matières: 0")
-        # NOUVELLES LABELS POUR LES QUIZ
-        self.quiz_total_label = MDLabel(text="Quiz réalisés: 0")
-        self.quiz_moyenne_label = MDLabel(text="Moyenne quiz: 0%")
+        self.label_temps = MDLabel(text="Temps total: 0 min")
+        self.label_sessions = MDLabel(text="Sessions: 0") 
+        self.label_matieres = MDLabel(text="Matières: 0")
+        self.label_quiz = MDLabel(text="Quiz réalisés: 0")
         
-        stats_layout.add_widget(self.temps_label)
-        stats_layout.add_widget(self.sessions_label)
-        stats_layout.add_widget(self.matieres_label)
-        stats_layout.add_widget(self.quiz_total_label)
-        stats_layout.add_widget(self.quiz_moyenne_label)
+        layout_stats.add_widget(self.label_temps)
+        layout_stats.add_widget(self.label_sessions)
+        layout_stats.add_widget(self.label_matieres)
+        layout_stats.add_widget(self.label_quiz)
         
-        stats_card.add_widget(stats_layout)
-        layout.add_widget(stats_card)
+        carte_stats.add_widget(layout_stats)
+        layout.add_widget(carte_stats)
         
         # Liste matières
-        subjects_scroll = MDScrollView()
-        self.subjects_list = MDList()
-        subjects_scroll.add_widget(self.subjects_list)
-        layout.add_widget(subjects_scroll)
+        scroll_matieres = MDScrollView()
+        self.liste_matieres = MDList()
+        scroll_matieres.add_widget(self.liste_matieres)
+        layout.add_widget(scroll_matieres)
         
-        # Boutons
-        buttons_layout = MDBoxLayout(
-            orientation="horizontal",
-            spacing="10dp",
-            size_hint_y=None,
-            height="48dp"
-        )
-        
-        associate_btn = MDRaisedButton(text="Associer Note")
-        associate_btn.bind(on_release=self.associer_note_dialogue)
-        buttons_layout.add_widget(associate_btn)
-        
-        stats_btn = MDRaisedButton(text="Statistiques")
-        stats_btn.bind(on_release=self.afficher_statistiques)
-        buttons_layout.add_widget(stats_btn)
-        
-        layout.add_widget(buttons_layout)
-        
-        self.update_evolution_panel()
+        self.mettre_a_jour_stats()
         return layout
 
-    # CORRECTION 1: Fonctions principales corrigées
+    # Méthodes pour les notes
     def nouvelle_note(self, *args):
-        """Crée une nouvelle note - CORRIGÉ"""
-        self.note_actuelle = None
-        self.title_field.text = ""
-        self.content_field.text = ""
-        self.show_snackbar("Nouvelle note créée. Entrez le titre et le contenu.")
+        self.note_en_cours = None
+        self.champ_titre.text = ""
+        self.champ_contenu.text = ""
+        self.afficher_message("Nouvelle note créée")
 
     def sauvegarder_note(self, *args):
-        """Sauvegarde la note actuelle - CORRECTION MAJEURE"""
-        titre = self.title_field.text.strip()
-        contenu = self.content_field.text.strip()
+        titre = self.champ_titre.text.strip()
+        contenu = self.champ_contenu.text.strip()
         
         if not titre:
-            self.show_snackbar("Le titre ne peut pas être vide!")
+            self.afficher_message("Le titre ne peut pas être vide!")
             return
         
-        if self.note_actuelle:
-            # Modification d'une note existante
-            self.note_actuelle['titre'] = titre
-            self.note_actuelle['contenu'] = contenu
-            self.note_actuelle['date_modification'] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            self.enregistrer_activite('modification', f"Modification de {titre}")
-            message = "Note modifiée avec succès!"
+        if self.note_en_cours:
+            # Modifier une note existante
+            self.note_en_cours['titre'] = titre
+            self.note_en_cours['contenu'] = contenu
+            self.note_en_cours['date_modification'] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            message = "Note modifiée!"
         else:
-            # Nouvelle note - CORRECTION: génération d'ID unique
-            nouveau_id = max([note['id'] for note in self.notes_liste], default=0) + 1
-            
+            # Créer une nouvelle note
             nouvelle_note = {
-                'id': nouveau_id,
+                'id': len(self.notes) + 1,
                 'titre': titre,
                 'contenu': contenu,
-                'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                'tags': []
+                'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M")
             }
-            
-            # CORRECTION: Ajouter à la liste ET définir comme note actuelle
-            self.notes_liste.append(nouvelle_note)
-            self.note_actuelle = nouvelle_note
-            self.enregistrer_activite('creation', f"Création de {titre}")
-            message = "Nouvelle note sauvegardée!"
+            self.notes.append(nouvelle_note)
+            self.note_en_cours = nouvelle_note
+            message = "Note sauvegardée!"
         
-        # Mettre à jour l'affichage et sauvegarder
-        self.update_notes_list()
-        self.save_data()
-        self.show_snackbar(message)
+        self.mettre_a_jour_notes()
+        self.sauvegarder_donnees()
+        self.afficher_message(message)
 
-    def update_notes_list(self):
-        """Met à jour la liste des notes - CORRECTION AFFICHAGE"""
-        if not hasattr(self, 'notes_list'):
+    def mettre_a_jour_notes(self):
+        # Vider la liste
+        if not hasattr(self, 'liste_notes'):
             return
             
-        self.notes_list.clear_widgets()
+        self.liste_notes.clear_widgets()
         
-        # Utiliser les notes filtrées ou toutes les notes
-        notes_a_afficher = self.notes_filtrees if self.notes_filtrees else self.notes_liste
+        # Choisir les notes à afficher (filtrées ou toutes)
+        notes_a_afficher = self.notes_trouvees if self.notes_trouvees else self.notes
         
-        # Trier par date de création (plus récentes en premier)
+        # Trier par date de création
         notes_triees = sorted(notes_a_afficher, 
                             key=lambda x: x.get('date_creation', ''), 
                             reverse=True)
         
         for note in notes_triees:
-            # Affichage amélioré
+            # Couper le contenu si trop long
             contenu_court = note['contenu'][:50] + "..." if len(note['contenu']) > 50 else note['contenu']
-            date_affichage = note.get('date_creation', 'Inconnue')
+            date_creation = note.get('date_creation', 'Inconnue')
             
             item = ThreeLineListItem(
                 text=note['titre'],
-                secondary_text=f"Créée: {date_affichage}",
+                secondary_text=f"Créée: {date_creation}",
                 tertiary_text=contenu_court
             )
-            item.bind(on_release=lambda x, note=note: self.select_note(note))
-            self.notes_list.add_widget(item)
+            item.bind(on_release=lambda x, note=note: self.selectionner_note(note))
+            self.liste_notes.add_widget(item)
 
-    def select_note(self, note):
-        """Sélectionne une note - CORRECTION AFFICHAGE"""
-        self.note_actuelle = note
-        self.title_field.text = note['titre']
-        self.content_field.text = note['contenu']
-        self.enregistrer_activite('lecture', f"Lecture de {note['titre']}")
-        
-        # Créer un dialog pour afficher la note complète
+    def selectionner_note(self, note):
+        self.note_en_cours = note
+        self.champ_titre.text = note['titre']
+        self.champ_contenu.text = note['contenu']
         self.afficher_note_complete(note)
 
     def afficher_note_complete(self, note):
-        """Affiche la note complète avec meilleur formatage - CORRECTION AFFICHAGE"""
-        content = MDBoxLayout(
+        # Créer le contenu du dialogue
+        contenu = MDBoxLayout(
             orientation="vertical", 
             spacing="15dp", 
-            adaptive_height=True,
             size_hint_y=None
         )
-        content.bind(minimum_height=content.setter('height'))
+        contenu.bind(minimum_height=contenu.setter('height'))
         
-        # Informations de la note
+        # Infos de la note
         info_text = f"Créée: {note.get('date_creation', 'Inconnue')}"
         if note.get('date_modification'):
             info_text += f"\nModifiée: {note['date_modification']}"
@@ -488,12 +440,12 @@ class StudyHelperApp(MDApp):
             size_hint_y=None,
             height="40dp"
         )
-        content.add_widget(info_label)
+        contenu.add_widget(info_label)
         
-        # Contenu de la note avec scroll intégré si nécessaire
+        # Contenu de la note
         contenu_scroll = MDScrollView(
             size_hint=(1, None),
-            height="300dp"  # Hauteur fixe pour éviter débordement
+            height="300dp"
         )
         
         contenu_label = MDLabel(
@@ -501,56 +453,95 @@ class StudyHelperApp(MDApp):
             font_style="Body1",
             text_size=(None, None),
             valign="top",
-            markup=True,
             size_hint_y=None
         )
-        # Calculer la hauteur nécessaire pour le texte
-        contenu_label.text_size = (280, None)  # Largeur fixe
+        contenu_label.text_size = (280, None)
         contenu_label.bind(texture_size=contenu_label.setter('size'))
         
         contenu_scroll.add_widget(contenu_label)
-        content.add_widget(contenu_scroll)
+        contenu.add_widget(contenu_scroll)
         
         self.dialog = MDDialog(
             title=note['titre'],
             type="custom",
-            content_cls=content,
-            size_hint=(0.9, 0.8),  # Limiter la taille du dialog
+            content_cls=contenu,
+            size_hint=(0.9, 0.8),
             buttons=[
-                MDRaisedButton(text="Modifier", on_release=lambda x: self.modifier_note_actuelle()),
-                MDRaisedButton(text="Fermer", on_release=self.close_dialog)
+                MDRaisedButton(text="Modifier", on_release=lambda x: self.charger_dans_editeur()),
+                MDRaisedButton(text="Fermer", on_release=self.fermer_dialog)
             ]
         )
         self.dialog.open()
 
-    def modifier_note_actuelle(self):
-        """Charge la note actuelle dans l'éditeur"""
-        self.close_dialog()
-        # La note est déjà chargée dans les champs par select_note
-        self.show_snackbar(f"Note '{self.note_actuelle['titre']}' chargée dans l'éditeur")
+    def charger_dans_editeur(self):
+        self.fermer_dialog()
+        self.afficher_message(f"Note '{self.note_en_cours['titre']}' chargée dans l'éditeur")
 
-    # CORRECTION 2: Fonction résumé intelligente
-    def resumer_texte_intelligent(self, *args):
-        """Résumé intelligent avec meilleur affichage - CORRECTION AFFICHAGE"""
-        if not self.note_actuelle:
-            self.show_snackbar("Sélectionnez une note à résumer!")
+    def rechercher_notes(self, instance, texte):
+        if not texte.strip():
+            self.notes_trouvees = []
+        else:
+            self.notes_trouvees = [
+                note for note in self.notes
+                if texte.lower() in note['titre'].lower() or texte.lower() in note['contenu'].lower()
+            ]
+        self.mettre_a_jour_notes()
+
+    def effacer_recherche(self, *args):
+        self.champ_recherche.text = ""
+        self.notes_trouvees = []
+        self.mettre_a_jour_notes()
+
+    def supprimer_note(self, *args):
+        if not self.note_en_cours:
+            self.afficher_message("Aucune note sélectionnée!")
             return
         
-        contenu = self.note_actuelle['contenu']
+        self.dialog = MDDialog(
+            text=f"Supprimer la note '{self.note_en_cours['titre']}'?",
+            buttons=[
+                MDRaisedButton(text="Supprimer", on_release=self.confirmer_suppression),
+                MDRaisedButton(text="Annuler", on_release=self.fermer_dialog)
+            ]
+        )
+        self.dialog.open()
+
+    def confirmer_suppression(self, *args):
+        if self.note_en_cours in self.notes:
+            self.notes.remove(self.note_en_cours)
+            self.mettre_a_jour_notes()
+            self.sauvegarder_donnees()
+            
+            # Vider l'éditeur
+            self.champ_titre.text = ""
+            self.champ_contenu.text = ""
+            self.note_en_cours = None
+            
+            self.fermer_dialog()
+            self.afficher_message("Note supprimée!")
+
+    # Méthodes pour le résumé et quiz
+    def faire_resume(self, *args):
+        if not self.note_en_cours:
+            self.afficher_message("Sélectionnez une note à résumer!")
+            return
+        
+        contenu = self.note_en_cours['contenu']
         
         if len(contenu) < 100:
-            self.show_snackbar("Note trop courte pour être résumée")
+            self.afficher_message("Note trop courte pour être résumée")
             return
         
-        resume = self.generer_resume_basique(contenu)
+        # Faire un résumé simple
+        resume = self.creer_resume_simple(contenu)
         
-        content = MDBoxLayout(
+        # Afficher le résumé
+        contenu_dialog = MDBoxLayout(
             orientation="vertical", 
             spacing="15dp", 
-            adaptive_height=True,
             size_hint_y=None
         )
-        content.bind(minimum_height=content.setter('height'))
+        contenu_dialog.bind(minimum_height=contenu_dialog.setter('height'))
         
         stats_label = MDLabel(
             text=f"Note originale: {len(contenu.split())} mots\nRésumé: {len(resume.split())} mots",
@@ -559,9 +550,8 @@ class StudyHelperApp(MDApp):
             size_hint_y=None,
             height="40dp"
         )
-        content.add_widget(stats_label)
+        contenu_dialog.add_widget(stats_label)
         
-        # Résumé dans un scroll pour éviter débordement
         resume_scroll = MDScrollView(
             size_hint=(1, None),
             height="300dp"
@@ -572,1371 +562,929 @@ class StudyHelperApp(MDApp):
             font_style="Body1",
             text_size=(None, None),
             valign="top",
-            markup=True,
             size_hint_y=None
         )
         resume_label.text_size = (280, None)
         resume_label.bind(texture_size=resume_label.setter('size'))
         
         resume_scroll.add_widget(resume_label)
-        content.add_widget(resume_scroll)
+        contenu_dialog.add_widget(resume_scroll)
         
         self.dialog = MDDialog(
-            title=f"Résumé: {self.note_actuelle['titre']}",
+            title=f"Résumé: {self.note_en_cours['titre']}",
             type="custom",
-            content_cls=content,
+            content_cls=contenu_dialog,
             size_hint=(0.9, 0.8),
-            buttons=[MDRaisedButton(text="Fermer", on_release=self.close_dialog)]
+            buttons=[MDRaisedButton(text="Fermer", on_release=self.fermer_dialog)]
         )
         self.dialog.open()
 
-    def generer_resume_basique(self, texte):
-        """Génère un résumé basique en extrayant les phrases importantes"""
-        phrases = re.split(r'[.!?]+', texte)
-        phrases = [p.strip() for p in phrases if len(p.strip()) > 20]
+    def creer_resume_simple(self, texte):
+        # Découper le texte en phrases
+        phrases = []
+        phrase_actuelle = ""
+        
+        for char in texte:
+            phrase_actuelle += char
+            if char in '.!?':
+                phrase_nettoyee = phrase_actuelle.strip()
+                if len(phrase_nettoyee) > 20:
+                    phrases.append(phrase_nettoyee)
+                phrase_actuelle = ""
         
         if len(phrases) <= 3:
             return texte[:200] + "..." if len(texte) > 200 else texte
         
-        # Prendre la première phrase, une du milieu, et une de la fin
-        indices = [0, len(phrases)//2, -1]
-        phrases_importantes = [phrases[i] for i in indices if i < len(phrases)]
+        # Prendre quelques phrases importantes
+        phrases_importantes = []
+        phrases_importantes.append(phrases[0])  # Première phrase
         
-        resume = '. '.join(phrases_importantes) + '.'
+        if len(phrases) > 2:
+            phrases_importantes.append(phrases[len(phrases)//2])  # Phrase du milieu
         
-        # Limiter à 150 mots maximum
-        mots_resume = resume.split()
-        if len(mots_resume) > 150:
-            resume = ' '.join(mots_resume[:150]) + '...'
+        phrases_importantes.append(phrases[-1])  # Dernière phrase
+        
+        resume = ' '.join(phrases_importantes)
+        
+        # Limiter le nombre de mots
+        mots = resume.split()
+        if len(mots) > 100:
+            resume = ' '.join(mots[:100]) + '...'
         
         return resume
 
-    # === NOUVELLES MÉTHODES POUR LE QUIZ CORRIGÉ ===
-    
-    def extraire_mots_cles(self, texte):
-        """Extrait les mots-clés du texte"""
-        mots = re.findall(r'\b\w{4,}\b', texte.lower())
-        # Supprimer les mots communs
-        mots_communs = {'dans', 'avec', 'pour', 'cette', 'sont', 'peut', 'plus', 'mais', 'tout', 'tous', 'leur', 'bien', 'aussi', 'très', 'encore', 'même', 'grand', 'comme', 'donc', 'depuis'}
-        mots_filtres = [mot for mot in mots if mot not in mots_communs]
-        
-        # Retourner les mots les plus fréquents
-        compteur = Counter(mots_filtres)
-        return [mot for mot, freq in compteur.most_common(10)]
-
-    def identifier_themes(self, texte, phrases):
-        """Identifie les thèmes principaux"""
-        themes = []
-        mots_cles = self.extraire_mots_cles(texte)
-        
-        # Grouper les mots-clés par thèmes potentiels
-        for mot in mots_cles[:5]:  # Top 5 mots-clés
-            theme_phrases = [p for p in phrases if mot in p.lower()]
-            if theme_phrases:
-                themes.append({
-                    'mot_cle': mot,
-                    'phrases': theme_phrases[:2]  # Maximum 2 phrases par thème
-                })
-        
-        return themes
-
-    def extraire_definitions(self, texte):
-        """Extrait les définitions du texte"""
-        definitions = []
-        phrases = re.split(r'[.!?]+', texte)
-        
-        for phrase in phrases:
-            # Chercher des patterns de définition
-            if any(pattern in phrase.lower() for pattern in ['est un', 'est une', 'désigne', 'correspond à', 'signifie']):
-                parts = phrase.split(':')
-                if len(parts) == 2:
-                    definitions.append({
-                        'terme': parts[0].strip(),
-                        'definition': parts[1].strip()
-                    })
-                else:
-                    # Pattern simple : "X est Y"
-                    if ' est ' in phrase.lower():
-                        parts = phrase.lower().split(' est ')
-                        if len(parts) == 2:
-                            definitions.append({
-                                'terme': parts[0].strip(),
-                                'definition': parts[1].strip()
-                            })
-        
-        return definitions[:3]  # Maximum 3 définitions
-
-    def extraire_concepts_importants(self, texte):
-        """Extrait les concepts importants"""
-        concepts = []
-        mots_cles = self.extraire_mots_cles(texte)
-        
-        # Chercher des concepts avec des mots en majuscules ou des termes techniques
-        mots_texte = texte.split()
-        for mot in mots_texte:
-            if (len(mot) > 3 and 
-                (mot[0].isupper() or 
-                 mot.lower() in mots_cles)):
-                concepts.append(mot.strip('.,!?:;'))
-        
-        # Supprimer doublons et garder les plus pertinents
-        concepts_uniques = list(set(concepts))
-        return concepts_uniques[:8]
-
-    def question_existe_deja(self, nouvelle_question, questions_existantes):
-        """Vérifie si une question similaire existe déjà"""
-        nouveau_texte = nouvelle_question['question'].lower()
-        
-        for question in questions_existantes:
-            if question['question'].lower() == nouveau_texte:
-                return True
-            # Vérifier similarité basique
-            mots_nouveau = set(nouveau_texte.split())
-            mots_existant = set(question['question'].lower().split())
-            
-            intersection = len(mots_nouveau & mots_existant)
-            union = len(mots_nouveau | mots_existant)
-            
-            if union > 0 and intersection / union > 0.7:  # 70% de similarité
-                return True
-        
-        return False
-
-    # === GÉNÉRATEURS DE QUESTIONS INTELLIGENTES ===
-    
-    def question_definition_concept(self, definitions, mots_cles):
-        """Génère une question sur une définition"""
-        if not definitions:
-            return None
-        
-        definition = random.choice(definitions)
-        fausses_definitions = [
-            "Une méthode d'analyse",
-            "Un processus complexe", 
-            "Un élément fondamental"
-        ]
-        
-        options = [definition['definition']] + fausses_definitions
-        random.shuffle(options)
-        correct_index = options.index(definition['definition'])
-        
-        return {
-            "question": f"Que signifie '{definition['terme']}'?",
-            "options": options,
-            "correct": correct_index,
-            "explication": f"'{definition['terme']}' {definition['definition']}"
-        }
-
-    def question_mot_cle_contexte(self, mots_cles, contenu):
-        """Question sur l'utilisation d'un mot-clé"""
-        if not mots_cles:
-            return None
-        
-        mot = random.choice(mots_cles)
-        phrases = [p.strip() for p in re.split(r'[.!?]+', contenu) if mot.lower() in p.lower()]
-        
-        if not phrases:
-            return None
-        
-        phrase_vraie = phrases[0][:80] + "..." if len(phrases[0]) > 80 else phrases[0]
-        
-        fausses_phrases = [
-            "Ce terme n'apparaît pas dans la note",
-            "Il est mentionné seulement en conclusion",
-            "Il est défini au début du texte"
-        ]
-        
-        options = [phrase_vraie] + fausses_phrases
-        random.shuffle(options)
-        correct_index = options.index(phrase_vraie)
-        
-        return {
-            "question": f"Comment le mot '{mot}' est-il utilisé dans le texte?",
-            "options": options,
-            "correct": correct_index,
-            "explication": f"Le mot '{mot}' apparaît dans ce contexte."
-        }
-
-    def question_theme_principal(self, themes, contenu):
-        """Question sur le thème principal"""
-        if not themes:
-            return None
-        
-        theme = random.choice(themes)
-        faux_themes = ["analyse comparative", "étude historique", "recherche empirique"]
-        
-        options = [f"Le thème de '{theme['mot_cle']}'"] + [f"Le thème de '{t}'" for t in faux_themes]
-        random.shuffle(options)
-        correct_index = options.index(f"Le thème de '{theme['mot_cle']}'")
-        
-        return {
-            "question": "Quel est l'un des thèmes abordés dans cette note?",
-            "options": options,
-            "correct": correct_index,
-            "explication": f"Le thème '{theme['mot_cle']}' est effectivement abordé."
-        }
-
-    def question_relation_concepts(self, concepts, contenu):
-        """Question sur la relation entre concepts"""
-        if len(concepts) < 2:
-            return None
-        
-        concept1, concept2 = random.sample(concepts, 2)
-        
-        # Vérifier s'ils apparaissent dans la même phrase
-        phrases = re.split(r'[.!?]+', contenu)
-        relation_trouvee = False
-        
-        for phrase in phrases:
-            if concept1.lower() in phrase.lower() and concept2.lower() in phrase.lower():
-                relation_trouvee = True
-                break
-        
-        if relation_trouvee:
-            options = [
-                f"'{concept1}' et '{concept2}' sont liés",
-                f"'{concept1}' s'oppose à '{concept2}'",
-                f"'{concept1}' précède '{concept2}'",
-                "Aucune relation mentionnée"
-            ]
-            correct_index = 0
-            explication = f"'{concept1}' et '{concept2}' sont mentionnés ensemble dans le texte."
-        else:
-            options = [
-                "Aucune relation directe mentionnée",
-                f"'{concept1}' dépend de '{concept2}'",
-                f"'{concept2}' est un type de '{concept1}'",
-                f"'{concept1}' et '{concept2}' sont identiques"
-            ]
-            correct_index = 0
-            explication = f"'{concept1}' et '{concept2}' n'ont pas de relation directe dans le texte."
-        
-        return {
-            "question": f"Quelle relation existe entre '{concept1}' et '{concept2}'?",
-            "options": options,
-            "correct": correct_index,
-            "explication": explication
-        }
-
-    def question_comprehension_phrase(self, phrases):
-        """Question de compréhension d'une phrase"""
-        if not phrases:
-            return None
-        
-        phrase = random.choice([p for p in phrases if len(p.split()) > 8])
-        if not phrase:
-            return None
-        
-        # Prendre les premiers mots de la phrase
-        debut_phrase = ' '.join(phrase.split()[:6]) + "..."
-        
-        faux_debuts = [
-            "Cette analyse démontre que...",
-            "Les résultats indiquent que...",
-            "Il est important de noter..."
-        ]
-        
-        options = [debut_phrase] + faux_debuts
-        random.shuffle(options)
-        correct_index = options.index(debut_phrase)
-        
-        return {
-            "question": "Laquelle de ces phrases apparaît dans la note?",
-            "options": options,
-            "correct": correct_index,
-            "explication": f"Cette phrase commence effectivement ainsi dans la note."
-        }
-
-    def question_application_concept(self, mots_cles, contenu):
-        """Question sur l'application d'un concept"""
-        if not mots_cles:
-            return None
-        
-        concept = random.choice(mots_cles)
-        
-        applications = [
-            f"Pour comprendre {concept}",
-            f"Pour appliquer {concept}",
-            f"Pour analyser {concept}",
-            "Pour mémoriser le concept"
-        ]
-        
-        # La première option est généralement correcte
-        correct_index = random.randint(0, 2)  # Les 3 premières sont potentiellement correctes
-        
-        return {
-            "question": f"Comment peut-on utiliser le concept de '{concept}'?",
-            "options": applications,
-            "correct": correct_index,
-            "explication": f"Le concept de '{concept}' peut être utilisé de différentes manières selon le contexte."
-        }
-
-    def question_analyse_contenu(self, themes, phrases):
-        """Question d'analyse du contenu"""
-        if not themes or not phrases:
-            return None
-        
-        nb_themes = len(themes)
-        nb_phrases = len(phrases)
-        
-        options = [
-            f"Traite {nb_themes} thèmes principaux",
-            f"Contient {nb_themes * 2} thèmes principaux",
-            "Se concentre sur un seul thème",
-            "Aborde plus de 10 thèmes différents"
-        ]
-        
-        return {
-            "question": "Comment peut-on caractériser le contenu de cette note?",
-            "options": options,
-            "correct": 0,
-            "explication": f"Cette note développe {nb_themes} thèmes principaux identifiés."
-        }
-
-    # CORRECTION 3: Système de quiz amélioré
-    def config_quiz_dialog(self, *args):
-        """Dialog pour configurer le quiz - CORRECTION"""
-        if not self.note_actuelle:
-            self.show_snackbar("Sélectionnez une note pour le quiz!")
+    def creer_quiz(self, *args):
+        if not self.note_en_cours:
+            self.afficher_message("Sélectionnez une note pour créer un quiz!")
             return
         
-        content = MDBoxLayout(orientation="vertical", spacing="15dp", adaptive_height=True)
+        # Configuration du quiz
+        contenu_config = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None)
+        contenu_config.bind(minimum_height=contenu_config.setter('height'))
         
-        instruction_label = MDLabel(
-            text="Combien de questions voulez-vous?",
-            font_style="Subtitle1"
-        )
-        content.add_widget(instruction_label)
-        
-        self.quiz_count_field = MDTextField(
-            hint_text="Nombre de questions (1-10)",
+        self.champ_nb_questions = MDTextField(
+            hint_text="Nombre de questions (3-10)",
             text="5",
             size_hint_y=None,
             height="48dp"
         )
-        content.add_widget(self.quiz_count_field)
+        contenu_config.add_widget(self.champ_nb_questions)
         
         self.dialog = MDDialog(
             title="Configuration Quiz",
             type="custom",
-            content_cls=content,
+            content_cls=contenu_config,
             buttons=[
-                MDRaisedButton(text="Annuler", on_release=self.close_dialog),
-                MDRaisedButton(text="Démarrer Quiz", on_release=self.demarrer_quiz_configure)
+                MDRaisedButton(text="Créer Quiz", on_release=self.generer_quiz),
+                MDRaisedButton(text="Annuler", on_release=self.fermer_dialog)
             ]
         )
         self.dialog.open()
 
-    def demarrer_quiz_configure(self, *args):
-        """Démarre le quiz avec la configuration choisie"""
+    def generer_quiz(self, *args):
         try:
-            nombre_questions = int(self.quiz_count_field.text.strip())
-            if nombre_questions < 1 or nombre_questions > 10:
-                self.show_snackbar("Choisissez entre 1 et 10 questions!")
-                return
-        except ValueError:
-            self.show_snackbar("Entrez un nombre valide!")
+            nb_questions = int(self.champ_nb_questions.text)
+            if nb_questions < 3 or nb_questions > 10:
+                nb_questions = 5
+        except:
+            nb_questions = 5
+        
+        self.nb_questions = nb_questions
+        contenu = self.note_en_cours['contenu']
+        
+        print(f"Génération quiz pour: {len(contenu)} caractères")  # Debug
+        
+        # Générer les questions
+        self.questions_quiz = self.creer_questions_simples(contenu, nb_questions)
+        
+        print(f"Questions générées: {len(self.questions_quiz)}")  # Debug
+        
+        if not self.questions_quiz:
+            # Si échec, créer des questions très simples
+            self.questions_quiz = self.creer_questions_basiques(contenu, nb_questions)
+            print(f"Questions basiques: {len(self.questions_quiz)}")  # Debug
+        
+        if not self.questions_quiz:
+            self.afficher_message("Impossible de générer un quiz. Votre note est peut-être trop courte.")
+            self.fermer_dialog()
             return
         
-        self.quiz_nombre_questions = nombre_questions
-        self.close_dialog()
-        self.generer_quiz_ameliore()
+        self.question_actuelle = 0
+        self.score_quiz = 0
+        
+        self.fermer_dialog()
+        self.commencer_quiz()
 
-    def generer_quiz_ameliore(self):
-        """Génère un quiz intelligent basé sur l'analyse du contenu de la note"""
-        contenu = self.note_actuelle['contenu']
-        
-        if len(contenu.split()) < 30:
-            self.show_snackbar("La note doit contenir au moins 30 mots pour un quiz pertinent!")
-            return
-        
-        # Analyser le contenu pour générer des questions pertinentes
+    def creer_questions_basiques(self, texte, nb_questions):
+        """Méthode de secours pour créer des questions très simples"""
         questions = []
         
-        # Extraire les informations importantes
-        mots_cles = self.extraire_mots_cles(contenu)
-        themes = self.identifier_themes(contenu, re.split(r'[.!?]+', contenu))
-        phrases = [p.strip() for p in re.split(r'[.!?]+', contenu) if len(p.strip()) > 15]
-        definitions = self.extraire_definitions(contenu)
-        concepts_importants = self.extraire_concepts_importants(contenu)
+        # Questions sur la longueur et le contenu
+        if len(texte) > 50:
+            questions.append({
+                "question": f"Votre note contient-elle plus de {len(texte.split())//2} mots?",
+                "options": ["Vrai", "Faux"],
+                "correct": 0 if len(texte.split()) > len(texte.split())//2 else 1,
+                "explication": f"Votre note contient {len(texte.split())} mots."
+            })
         
-        # Types de questions intelligentes basées sur le contenu
-        generateurs_questions = [
-            lambda: self.question_definition_concept(definitions, mots_cles),
-            lambda: self.question_mot_cle_contexte(mots_cles, contenu),
-            lambda: self.question_theme_principal(themes, contenu),
-            lambda: self.question_relation_concepts(concepts_importants, contenu),
-            lambda: self.question_comprehension_phrase(phrases),
-            lambda: self.question_application_concept(mots_cles, contenu),
-            lambda: self.question_analyse_contenu(themes, phrases)
+        # Questions sur les mots présents
+        mots = texte.lower().split()
+        if len(mots) > 5:
+            mot_frequent = max(set(mots), key=mots.count) if mots else "test"
+            questions.append({
+                "question": f"Le mot '{mot_frequent}' apparaît-il dans votre note?",
+                "options": ["Vrai", "Faux"],
+                "correct": 0,
+                "explication": f"Le mot '{mot_frequent}' est présent dans votre note."
+            })
+        
+        # Question sur la première phrase
+        premieres_phrases = texte.split('.')[0] if '.' in texte else texte[:50]
+        if len(premieres_phrases) > 10:
+            questions.append({
+                "question": f"Votre note commence-t-elle par des mots similaires à: '{premieres_phrases[:20]}...'?",
+                "options": ["Vrai", "Faux"],
+                "correct": 0,
+                "explication": "C'est effectivement le début de votre note."
+            })
+        
+        return questions[:nb_questions]
+
+    def creer_questions_simples(self, texte, nb_questions):
+        # Créer des vraies questions pédagogiques
+        questions = []
+        
+        # 1. Questions à trous (complétion)
+        questions.extend(self.creer_questions_trous(texte, nb_questions // 3))
+        
+        # 2. Questions de définition
+        questions.extend(self.creer_questions_definitions(texte, nb_questions // 3))
+        
+        # 3. Questions de compréhension
+        questions.extend(self.creer_questions_comprehension(texte, nb_questions - len(questions)))
+        
+        return questions[:nb_questions]
+
+    def creer_questions_trous(self, texte, nb_max):
+        """Créer des questions à compléter avec des mots manquants"""
+        questions = []
+        phrases = [p.strip() for p in texte.split('.') if len(p.strip()) > 30]
+        
+        for phrase in phrases[:nb_max]:
+            mots = phrase.split()
+            if len(mots) < 5:
+                continue
+                
+            # Trouver des mots importants (pas "le", "de", "et"...)
+            mots_importants = []
+            mots_simples = {'le', 'la', 'les', 'de', 'du', 'des', 'et', 'ou', 'un', 'une', 'ce', 'se', 'dans', 'sur', 'avec', 'pour', 'par', 'est', 'sont', 'a', 'ont'}
+            
+            for i, mot in enumerate(mots):
+                mot_propre = mot.lower().strip('.,!?:;')
+                if len(mot_propre) > 3 and mot_propre not in mots_simples:
+                    mots_importants.append((i, mot))
+            
+            if not mots_importants:
+                continue
+            
+            # Choisir un mot important à faire deviner
+            index_mot, mot_correct = random.choice(mots_importants)
+            
+            # Créer la phrase à trous
+            phrase_trous = mots.copy()
+            phrase_trous[index_mot] = "______"
+            phrase_incomplete = ' '.join(phrase_trous)
+            
+            # Créer des fausses réponses
+            fausses_reponses = self.generer_fausses_reponses(mot_correct.strip('.,!?:;'), texte)
+            
+            options = [mot_correct.strip('.,!?:;')] + fausses_reponses[:3]
+            random.shuffle(options)
+            correct_index = options.index(mot_correct.strip('.,!?:;'))
+            
+            questions.append({
+                "question": f"Complétez: {phrase_incomplete}",
+                "options": options,
+                "correct": correct_index,
+                "explication": f"La bonne réponse est '{mot_correct.strip('.,!?:;')}' selon votre cours."
+            })
+        
+        return questions
+
+    def creer_questions_definitions(self, texte, nb_max):
+        """Créer des questions sur les concepts importants"""
+        questions = []
+        
+        # Chercher des phrases qui définissent quelque chose
+        phrases_definition = []
+        for phrase in texte.split('.'):
+            phrase = phrase.strip()
+            if any(mot in phrase.lower() for mot in ['est un', 'est une', 'désigne', 'signifie', 'correspond à', 'définit', 'représente']):
+                if len(phrase) > 20:
+                    phrases_definition.append(phrase)
+        
+        for phrase in phrases_definition[:nb_max]:
+            # Extraire le concept défini
+            concept = None
+            definition = None
+            
+            for separateur in [' est un ', ' est une ', ' désigne ', ' signifie ']:
+                if separateur in phrase.lower():
+                    parties = phrase.lower().split(separateur, 1)
+                    if len(parties) == 2:
+                        concept = parties[0].strip()
+                        definition = parties[1].strip()
+                        break
+            
+            if concept and definition and len(concept) < 50:
+                # Créer de fausses définitions
+                fausses_definitions = [
+                    "un processus complexe",
+                    "une méthode d'analyse",
+                    "un élément fondamental",
+                    "une technique spécialisée"
+                ]
+                
+                options = [definition[:80] + "..." if len(definition) > 80 else definition] + fausses_definitions[:3]
+                random.shuffle(options)
+                correct_index = options.index(definition[:80] + "..." if len(definition) > 80 else definition)
+                
+                questions.append({
+                    "question": f"Que {concept} ?",
+                    "options": options,
+                    "correct": correct_index,
+                    "explication": f"{concept.capitalize()} {definition[:100]}..."
+                })
+        
+        return questions
+
+    def creer_questions_comprehension(self, texte, nb_max):
+        """Créer des questions de compréhension générale"""
+        questions = []
+        phrases = [p.strip() for p in texte.split('.') if len(p.strip()) > 20]
+        
+        for phrase in phrases[:nb_max]:
+            if len(phrase) < 30:
+                continue
+                
+            # Question vrai/faux intelligente
+            if random.choice([True, False]):
+                # Phrase vraie
+                questions.append({
+                    "question": f"D'après votre cours: {phrase}",
+                    "options": ["Vrai", "Faux"],
+                    "correct": 0,
+                    "explication": "Cette information est correcte selon votre cours."
+                })
+            else:
+                # Phrase modifiée (fausse)
+                phrase_modifiee = self.modifier_phrase_intelligemment(phrase)
+                questions.append({
+                    "question": f"D'après votre cours: {phrase_modifiee}",
+                    "options": ["Vrai", "Faux"],
+                    "correct": 1,
+                    "explication": f"Faux. La version correcte est: {phrase}"
+                })
+        
+        return questions
+
+    def generer_fausses_reponses(self, mot_correct, texte):
+        """Générer de fausses réponses crédibles"""
+        mots_texte = []
+        for mot in texte.split():
+            mot_propre = mot.lower().strip('.,!?:;')
+            if len(mot_propre) > 3 and mot_propre != mot_correct.lower():
+                mots_texte.append(mot_propre)
+        
+        # Prendre des mots du texte comme fausses réponses
+        fausses = list(set(mots_texte))[:3]
+        
+        # Compléter avec des réponses génériques si pas assez
+        while len(fausses) < 3:
+            generiques = ['système', 'processus', 'méthode', 'élément', 'concept', 'technique', 'structure', 'fonction']
+            for g in generiques:
+                if g not in fausses and g != mot_correct.lower():
+                    fausses.append(g)
+                    break
+        
+        return fausses[:3]
+
+    def modifier_phrase_intelligemment(self, phrase):
+        """Modifier une phrase pour créer une question fausse mais crédible"""
+        modifications = [
+            (' est ', ' n\'est pas '),
+            (' sont ', ' ne sont pas '),
+            (' peut ', ' ne peut pas '),
+            (' permet ', ' ne permet pas '),
+            (' augmente ', ' diminue '),
+            (' diminue ', ' augmente '),
+            (' toujours ', ' jamais '),
+            (' jamais ', ' toujours '),
+            (' avant ', ' après '),
+            (' après ', ' avant ')
         ]
         
-        # Générer le nombre de questions demandé
-        questions_generees = 0
-        tentatives = 0
+        phrase_modifiee = phrase
+        for original, remplacement in modifications:
+            if original in phrase.lower():
+                phrase_modifiee = phrase_modifiee.replace(original, remplacement, 1)
+                break
         
-        while questions_generees < self.quiz_nombre_questions and tentatives < 20:
-            generateur = random.choice(generateurs_questions)
-            question = generateur()
-            
-            if question and not self.question_existe_deja(question, questions):
-                questions.append(question)
-                questions_generees += 1
-            
-            tentatives += 1
+        # Si aucune modification trouvée, inverser avec "Il est faux que"
+        if phrase_modifiee == phrase:
+            phrase_modifiee = f"Il est faux que {phrase.lower()}"
         
-        if not questions:
-            self.show_snackbar("Impossible de générer des questions pertinentes pour cette note!")
-            return
-        
-        self.quiz_questions = questions
-        self.quiz_score = 0
-        self.quiz_question_index = 0
-        self.afficher_question_quiz()
+        return phrase_modifiee
 
-    def afficher_question_quiz(self):
-        """Affiche une question du quiz"""
-        if self.quiz_question_index >= len(self.quiz_questions):
-            self.terminer_quiz()
+    def creer_question_vrai_faux(self, phrase):
+        # Enlever la ponctuation finale
+        phrase_propre = phrase.rstrip('.!?').strip()
+        
+        # Vérifier que la phrase n'est pas trop courte
+        if len(phrase_propre) < 10:
+            return None
+        
+        # 50% de chance de garder la phrase vraie
+        if random.choice([True, False]):
+            return {
+                "question": f"Vrai ou Faux: {phrase_propre}",
+                "options": ["Vrai", "Faux"],
+                "correct": 0,
+                "explication": "Cette affirmation est dans votre note."
+            }
+        else:
+            # Modifier la phrase pour la rendre fausse
+            phrase_fausse = phrase_propre
+            
+            # Essayer différentes modifications
+            if " est " in phrase_fausse:
+                phrase_fausse = phrase_fausse.replace(" est ", " n'est pas ", 1)
+            elif " sont " in phrase_fausse:
+                phrase_fausse = phrase_fausse.replace(" sont ", " ne sont pas ", 1)
+            elif " a " in phrase_fausse:
+                phrase_fausse = phrase_fausse.replace(" a ", " n'a pas ", 1)
+            elif " peut " in phrase_fausse:
+                phrase_fausse = phrase_fausse.replace(" peut ", " ne peut pas ", 1)
+            elif " doit " in phrase_fausse:
+                phrase_fausse = phrase_fausse.replace(" doit ", " ne doit pas ", 1)
+            else:
+                # Si aucune modification possible, ajouter "Il est faux que"
+                phrase_fausse = f"Il est faux que {phrase_propre.lower()}"
+            
+            return {
+                "question": f"Vrai ou Faux: {phrase_fausse}",
+                "options": ["Vrai", "Faux"],
+                "correct": 1,
+                "explication": "Cette affirmation a été modifiée par rapport à votre note."
+            }
+
+    def commencer_quiz(self):
+        self.afficher_question()
+
+    def afficher_question(self):
+        if self.question_actuelle >= len(self.questions_quiz):
+            self.finir_quiz()
             return
         
-        question = self.quiz_questions[self.quiz_question_index]
+        question = self.questions_quiz[self.question_actuelle]
         
-        content = MDBoxLayout(orientation="vertical", spacing="15dp", adaptive_height=True)
+        contenu = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None)
+        contenu.bind(minimum_height=contenu.setter('height'))
+        
+        # Progression
+        progress_label = MDLabel(
+            text=f"Question {self.question_actuelle + 1}/{len(self.questions_quiz)}",
+            font_style="Caption",
+            theme_text_color="Secondary",
+            size_hint_y=None,
+            height="30dp"
+        )
+        contenu.add_widget(progress_label)
         
         # Question
         question_label = MDLabel(
-            text=question["question"],
-            font_style="H6",
-            theme_text_color="Primary"
+            text=question['question'],
+            font_style="Subtitle1",
+            size_hint_y=None,
+            height="60dp"
         )
-        content.add_widget(question_label)
+        question_label.bind(texture_size=question_label.setter('size'))
+        contenu.add_widget(question_label)
         
         # Options
-        self.quiz_buttons = []
-        for i, option in enumerate(question["options"]):
+        for i, option in enumerate(question['options']):
             btn = MDRaisedButton(
-                text=f"{chr(65+i)}. {option}",
+                text=f"{option}",
                 size_hint_y=None,
                 height="48dp"
             )
-            btn.bind(on_release=lambda x, index=i: self.repondre_quiz(index))
-            content.add_widget(btn)
-            self.quiz_buttons.append(btn)
-        
-        # Progress
-        progress_text = f"Question {self.quiz_question_index + 1}/{len(self.quiz_questions)}"
-        progress_label = MDLabel(text=progress_text, font_style="Caption")
-        content.add_widget(progress_label)
+            btn.bind(on_release=lambda x, index=i: self.repondre_question(index))
+            contenu.add_widget(btn)
         
         self.dialog = MDDialog(
-            title=f"Quiz: {self.note_actuelle['titre']}",
+            title=f"Quiz: {self.note_en_cours['titre']}",
             type="custom",
-            content_cls=content,
-            auto_dismiss=False
+            content_cls=contenu,
+            size_hint=(0.9, 0.8)
         )
         self.dialog.open()
 
-    def repondre_quiz(self, reponse_index):
-        """Traite la réponse au quiz"""
-        question = self.quiz_questions[self.quiz_question_index]
-        correct = question["correct"]
+    def repondre_question(self, reponse):
+        question = self.questions_quiz[self.question_actuelle]
+        correct = reponse == question['correct']
         
-        if reponse_index == correct:
-            self.quiz_score += 1
-            message = "Correct!"
-        else:
-            message = f"Incorrect. La bonne réponse était: {question['options'][correct]}"
+        if correct:
+            self.score_quiz += 1
         
-        # Fermer le dialog actuel
-        self.dialog.dismiss()
+        # Afficher la correction
+        self.afficher_correction(question, reponse, correct)
+
+    def afficher_correction(self, question, reponse, correct):
+        self.fermer_dialog()
         
-        # Afficher le résultat
+        contenu = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None)
+        contenu.bind(minimum_height=contenu.setter('height'))
+        
+        # Résultat
+        resultat = "Correct!" if correct else "Incorrect"
+        resultat_label = MDLabel(
+            text=resultat,
+            font_style="H6",
+            theme_text_color="Primary" if correct else "Error",
+            size_hint_y=None,
+            height="40dp"
+        )
+        contenu.add_widget(resultat_label)
+        
+        # Réponse donnée
+        votre_reponse = MDLabel(
+            text=f"Votre réponse: {question['options'][reponse]}",
+            font_style="Body1",
+            size_hint_y=None,
+            height="40dp"
+        )
+        contenu.add_widget(votre_reponse)
+        
+        # Bonne réponse si incorrecte
+        if not correct:
+            bonne_reponse = MDLabel(
+                text=f"Bonne réponse: {question['options'][question['correct']]}",
+                font_style="Body1",
+                theme_text_color="Primary",
+                size_hint_y=None,
+                height="40dp"
+            )
+            contenu.add_widget(bonne_reponse)
+        
+        # Explication
+        explication = MDLabel(
+            text=f"Explication: {question['explication']}",
+            font_style="Caption",
+            size_hint_y=None,
+            height="60dp"
+        )
+        explication.bind(texture_size=explication.setter('size'))
+        contenu.add_widget(explication)
+        
         self.dialog = MDDialog(
-            title=message,
-            text=question["explication"],
-            buttons=[
-                MDRaisedButton(
-                    text="SUIVANT",
-                    on_release=self.question_suivante
-                )
-            ]
+            title="Résultat",
+            type="custom",
+            content_cls=contenu,
+            buttons=[MDRaisedButton(text="Suivant", on_release=self.question_suivante)]
         )
         self.dialog.open()
 
     def question_suivante(self, *args):
-        """Passe à la question suivante"""
-        self.dialog.dismiss()
-        self.quiz_question_index += 1
-        self.afficher_question_quiz()
+        self.fermer_dialog()
+        self.question_actuelle += 1
+        self.afficher_question()
 
-    def terminer_quiz(self):
-        """Termine le quiz et affiche les résultats - AVEC ENREGISTREMENT STATISTIQUES"""
-        pourcentage = (self.quiz_score / len(self.quiz_questions)) * 100
+    def finir_quiz(self):
+        # Calculer le pourcentage
+        pourcentage = int((self.score_quiz / len(self.questions_quiz)) * 100)
         
-        # Enregistrer le score - MODIFICATION POUR STATISTIQUES
-        if self.session_actuelle:
-            matiere = self.session_actuelle['matiere']
-            if matiere in self.matieres:
-                score_data = {
-                    'date': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    'note_id': self.note_actuelle['id'],
-                    'note_titre': self.note_actuelle['titre'],  # AJOUT DU TITRE
-                    'score': self.quiz_score,
-                    'total': len(self.quiz_questions),
-                    'pourcentage': pourcentage
-                }
-                self.matieres[matiere]['quiz_scores'].append(score_data)
-                
-                if pourcentage >= 70:
-                    self.matieres[matiere]['progression']['quiz_reussis'] += 1
+        # Afficher les résultats
+        contenu = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None)
+        contenu.bind(minimum_height=contenu.setter('height'))
         
-        self.enregistrer_activite('quiz', f"Quiz terminé: {self.quiz_score}/{len(self.quiz_questions)}")
-        
-        # Déterminer le message selon le score
-        if pourcentage >= 90:
-            message = "Excellent!"
-            encouragement = "Vous maîtrisez parfaitement le sujet!"
-        elif pourcentage >= 70:
-            message = "Très bien!"
-            encouragement = "Bonne compréhension du sujet."
-        elif pourcentage >= 50:
-            message = "Peut mieux faire"
-            encouragement = "Relisez la note pour améliorer votre compréhension."
-        else:
-            message = "À retravailler"
-            encouragement = "Étudiez davantage cette note."
-        
-        self.dialog = MDDialog(
-            title=f"Quiz Terminé - {message}",
-            text=f"Score: {self.quiz_score}/{len(self.quiz_questions)} ({pourcentage:.1f}%)\n\n{encouragement}",
-            buttons=[
-                MDRaisedButton(text="RECOMMENCER", on_release=self.recommencer_quiz),
-                MDRaisedButton(text="TERMINER", on_release=self.close_dialog)
-            ]
+        score_label = MDLabel(
+            text=f"Score: {self.score_quiz}/{len(self.questions_quiz)} ({pourcentage}%)",
+            font_style="H5",
+            theme_text_color="Primary",
+            size_hint_y=None,
+            height="50dp"
         )
-        self.dialog.open()
+        contenu.add_widget(score_label)
         
-        self.save_data()
-        self.update_evolution_panel()
-
-    def recommencer_quiz(self, *args):
-        """Recommence le quiz"""
-        self.dialog.dismiss()
-        self.quiz_score = 0
-        self.quiz_question_index = 0
-        self.afficher_question_quiz()
-
-    def filter_notes(self, instance, text):
-        """Filtre les notes - CORRECTION"""
-        terme = text.lower().strip()
-        
-        if not terme:
-            self.notes_filtrees = []
+        # Message selon le score
+        if pourcentage >= 80:
+            message = "Excellent! Vous maîtrisez bien le sujet."
+        elif pourcentage >= 60:
+            message = "Bien! Continuez vos efforts."
+        elif pourcentage >= 40:
+            message = "Passable. Il serait bon de réviser."
         else:
-            self.notes_filtrees = [note for note in self.notes_liste 
-                                 if terme in note['titre'].lower() or 
-                                    terme in note['contenu'].lower()]
+            message = "À revoir. Relisez attentivement la note."
         
-        self.update_notes_list()
-
-    def effacer_recherche(self, *args):
-        """Efface la recherche"""
-        self.search_field.text = ""
-        self.notes_filtrees = []
-        self.update_notes_list()
-
-    def supprimer_note_dialog(self, *args):
-        """Dialog de suppression - CORRECTION"""
-        if not self.note_actuelle:
-            self.show_snackbar("Aucune note sélectionnée!")
-            return
-        
-        self.dialog = MDDialog(
-            title="Supprimer la note",
-            text=f"Supprimer '{self.note_actuelle['titre']}'?\n\nCette action est irréversible.",
-            buttons=[
-                MDRaisedButton(text="ANNULER", on_release=self.close_dialog),
-                MDRaisedButton(text="SUPPRIMER", on_release=self.confirm_delete_note)
-            ]
+        eval_label = MDLabel(
+            text=message,
+            font_style="Body1",
+            size_hint_y=None,
+            height="40dp"
         )
-        self.dialog.open()
-
-    def confirm_delete_note(self, *args):
-        """Confirme la suppression"""
-        if self.note_actuelle:
-            titre_supprime = self.note_actuelle['titre']
-            
-            # Supprimer de la liste
-            self.notes_liste = [note for note in self.notes_liste if note['id'] != self.note_actuelle['id']]
-            
-            # Réassigner les IDs pour éviter les gaps
-            for i, note in enumerate(self.notes_liste):
-                note['id'] = i + 1
-            
-            # Nettoyer l'interface
-            self.title_field.text = ""
-            self.content_field.text = ""
-            self.note_actuelle = None
-            
-            # Mettre à jour et sauvegarder
-            self.update_notes_list()
-            self.save_data()
-            self.show_snackbar(f"Note '{titre_supprime}' supprimée!")
-        
-        self.close_dialog()
-
-    def partager_note_dialog(self, *args):
-        """Dialog de partage"""
-        if not self.note_actuelle:
-            self.show_snackbar("Aucune note sélectionnée!")
-            return
-        
-        content = MDBoxLayout(orientation="vertical", spacing="10dp", adaptive_height=True)
-        
-        self.share_email_field = MDTextField(hint_text="Email destinataire")
-        content.add_widget(self.share_email_field)
+        contenu.add_widget(eval_label)
         
         self.dialog = MDDialog(
-            title="Partager la note",
+            title="Résultats du Quiz",
             type="custom",
-            content_cls=content,
-            buttons=[
-                MDRaisedButton(text="ANNULER", on_release=self.close_dialog),
-                MDRaisedButton(text="PARTAGER", on_release=self.confirm_share_note)
-            ]
+            content_cls=contenu,
+            buttons=[MDRaisedButton(text="Terminer", on_release=self.terminer_quiz)]
         )
         self.dialog.open()
-
-    def confirm_share_note(self, *args):
-        """Confirme le partage"""
-        email = self.share_email_field.text.strip()
-        if email:
-            self.show_snackbar(f"Note partagée avec {email}!")
-            self.close_dialog()
-        else:
-            self.show_snackbar("Email requis!")
-
-    # Rappels
-    def update_reminders_list(self):
-        """Met à jour la liste des rappels"""
-        if not hasattr(self, 'reminders_list'):
-            return
-            
-        self.reminders_list.clear_widgets()
         
-        for rappel in self.rappels_liste:
-            if rappel['actif']:
-                item = TwoLineListItem(
-                    text=rappel['titre'],
-                    secondary_text=rappel['date_heure']
-                )
-                self.reminders_list.add_widget(item)
+        self.sauvegarder_donnees()
+        self.mettre_a_jour_stats()
 
-    def ajouter_rappel_dialog(self, *args):
-        """Dialog pour ajouter un rappel"""
-        content = MDBoxLayout(orientation="vertical", spacing="10dp", adaptive_height=True)
+    def terminer_quiz(self, *args):
+        self.fermer_dialog()
+        self.questions_quiz = []
+        self.afficher_message("Quiz terminé!")
+
+    # Méthodes pour les rappels
+    def nouveau_rappel(self, *args):
+        contenu = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None)
+        contenu.bind(minimum_height=contenu.setter('height'))
         
-        self.reminder_title_field = MDTextField(hint_text="Titre du rappel")
-        content.add_widget(self.reminder_title_field)
-        
-        self.reminder_date_field = MDTextField(
-            hint_text="Date (YYYY-MM-DD)",
-            text=datetime.now().strftime("%Y-%m-%d")
+        self.champ_titre_rappel = MDTextField(
+            hint_text="Titre du rappel",
+            size_hint_y=None,
+            height="48dp"
         )
-        content.add_widget(self.reminder_date_field)
+        contenu.add_widget(self.champ_titre_rappel)
         
-        self.reminder_time_field = MDTextField(
-            hint_text="Heure (HH:MM)",
-            text="09:00"
+        self.champ_date_rappel = MDTextField(
+            hint_text="Date (YYYY-MM-DD HH:MM)",
+            size_hint_y=None,
+            height="48dp"
         )
-        content.add_widget(self.reminder_time_field)
+        contenu.add_widget(self.champ_date_rappel)
         
         self.dialog = MDDialog(
             title="Nouveau Rappel",
             type="custom",
-            content_cls=content,
+            content_cls=contenu,
             buttons=[
-                MDRaisedButton(text="ANNULER", on_release=self.close_dialog),
-                MDRaisedButton(text="AJOUTER", on_release=self.save_reminder)
+                MDRaisedButton(text="Ajouter", on_release=self.ajouter_rappel),
+                MDRaisedButton(text="Annuler", on_release=self.fermer_dialog)
             ]
         )
         self.dialog.open()
 
-    def save_reminder(self, *args):
-        """Sauvegarde un rappel"""
-        titre = self.reminder_title_field.text.strip()
-        date_str = self.reminder_date_field.text.strip()
-        heure_str = self.reminder_time_field.text.strip()
+    def ajouter_rappel(self, *args):
+        titre = self.champ_titre_rappel.text.strip()
+        date_str = self.champ_date_rappel.text.strip()
         
-        if not titre:
-            self.show_snackbar("Titre requis!")
+        if not titre or not date_str:
+            self.afficher_message("Veuillez remplir tous les champs!")
             return
         
-        try:
-            date_heure = datetime.strptime(f"{date_str} {heure_str}", "%Y-%m-%d %H:%M")
-            rappel = {
-                'id': len(self.rappels_liste) + 1,
-                'titre': titre,
-                'date_heure': date_heure.strftime("%Y-%m-%d %H:%M"),
-                'actif': True
-            }
-            self.rappels_liste.append(rappel)
-            self.update_reminders_list()
-            self.save_data()
-            self.show_snackbar("Rappel ajouté!")
-            self.close_dialog()
-        except ValueError:
-            self.show_snackbar("Format date/heure invalide!")
-
-    # Sessions d'étude
-    def demander_nouvelle_session(self, *args):
-        """Dialog pour nouvelle session"""
-        if self.session_actuelle:
-            self.dialog = MDDialog(
-                title="Session en cours",
-                text="Une session est active. La terminer?",
-                buttons=[
-                    MDRaisedButton(text="NON", on_release=self.close_dialog),
-                    MDRaisedButton(text="OUI", on_release=self.terminer_et_nouvelle_session)
-                ]
-            )
-            self.dialog.open()
-        else:
-            self.show_session_dialog()
-
-    def show_session_dialog(self):
-        """Affiche le dialog de session"""
-        content = MDBoxLayout(orientation="vertical", spacing="10dp", adaptive_height=True)
+        # Validation simple - juste vérifier qu'il y a quelque chose
+        if len(date_str) < 5:  # Au minimum "12:30" ou "2024-"
+            self.afficher_message("Format de date trop court!")
+            return
         
-        self.session_subject_field = MDTextField(hint_text="Nom de la matière")
-        content.add_widget(self.session_subject_field)
+        rappel = {
+            'id': len(self.rappels) + 1,
+            'titre': titre,
+            'date': date_str,
+            'active': True
+        }
+        
+        self.rappels.append(rappel)
+        self.mettre_a_jour_rappels()
+        self.sauvegarder_donnees()
+        
+        self.fermer_dialog()
+        self.afficher_message("Rappel ajouté!")
+
+    def mettre_a_jour_rappels(self):
+        if not hasattr(self, 'liste_rappels'):
+            return
+        
+        self.liste_rappels.clear_widgets()
+        
+        for rappel in sorted(self.rappels, key=lambda x: x['date']):
+            # Créer un layout horizontal pour chaque rappel
+            rappel_layout = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height="56dp",
+                spacing="10dp"
+            )
+            
+            # Info du rappel (prend la plupart de l'espace)
+            item = TwoLineListItem(
+                text=rappel['titre'],
+                secondary_text=f"Date: {rappel['date']}",
+                size_hint_x=0.7
+            )
+            rappel_layout.add_widget(item)
+            
+            # Bouton supprimer
+            btn_supprimer = MDRaisedButton(
+                text="Supprimer",
+                size_hint_x=0.3,
+                size_hint_y=None,
+                height="40dp"
+            )
+            btn_supprimer.bind(on_release=lambda x, rappel_id=rappel['id']: self.supprimer_rappel(rappel_id))
+            rappel_layout.add_widget(btn_supprimer)
+            
+            self.liste_rappels.add_widget(rappel_layout)
+
+    def supprimer_rappel(self, rappel_id):
+        # Trouver et supprimer le rappel
+        for i, rappel in enumerate(self.rappels):
+            if rappel['id'] == rappel_id:
+                self.rappels.pop(i)
+                break
+        
+        # Mettre à jour l'affichage
+        self.mettre_a_jour_rappels()
+        self.sauvegarder_donnees()
+        self.afficher_message("Rappel supprimé!")
+
+    # Méthodes pour les sessions d'étude
+    def demarrer_session(self, *args):
+        if self.session_active:
+            self.afficher_message("Une session est déjà en cours!")
+            return
+        
+        contenu = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None)
+        contenu.bind(minimum_height=contenu.setter('height'))
+        
+        self.champ_matiere = MDTextField(
+            hint_text="Matière à étudier",
+            size_hint_y=None,
+            height="48dp"
+        )
+        contenu.add_widget(self.champ_matiere)
+        
+        self.champ_objectif = MDTextField(
+            hint_text="Objectif de la session",
+            multiline=True,
+            size_hint_y=None,
+            height="80dp"
+        )
+        contenu.add_widget(self.champ_objectif)
         
         self.dialog = MDDialog(
-            title="Nouvelle Session",
+            title="Nouvelle Session d'Étude",
             type="custom",
-            content_cls=content,
+            content_cls=contenu,
             buttons=[
-                MDRaisedButton(text="ANNULER", on_release=self.close_dialog),
-                MDRaisedButton(text="DÉMARRER", on_release=self.start_session_from_dialog)
+                MDRaisedButton(text="Démarrer", on_release=self.confirmer_session),
+                MDRaisedButton(text="Annuler", on_release=self.fermer_dialog)
             ]
         )
         self.dialog.open()
 
-    def start_session_from_dialog(self, *args):
-        """Démarre session depuis dialog"""
-        matiere = self.session_subject_field.text.strip()
+    def confirmer_session(self, *args):
+        matiere = self.champ_matiere.text.strip()
+        objectif = self.champ_objectif.text.strip()
         
         if not matiere:
-            self.show_snackbar("Entrez le nom de la matière!")
+            self.afficher_message("Veuillez entrer une matière!")
             return
         
-        note_id = None
-        if self.note_actuelle:
-            note_id = self.note_actuelle.get('id')
-            self.associer_note_matiere(note_id, matiere)
-        
-        self.demarrer_session_etude(matiere, note_id)
-        self.update_evolution_panel()
-        self.close_dialog()
-        self.show_snackbar(f"Session démarrée pour {matiere}!")
-
-    def terminer_et_nouvelle_session(self, *args):
-        """Termine session et en démarre une nouvelle"""
-        self.terminer_session_etude()
-        self.close_dialog()
-        self.show_session_dialog()
-
-    def demarrer_session_etude(self, matiere, note_id=None):
-        """Démarre une session d'étude"""
-        if self.session_actuelle:
-            self.terminer_session_etude()
-        
-        self.session_actuelle = {
+        # Créer la session
+        self.session_active = {
+            'id': len(self.sessions) + 1,
             'matiere': matiere,
-            'note_id': note_id,
-            'debut': datetime.now(),
-            'activites': []
+            'objectif': objectif,
+            'date_debut': datetime.now(),
+            'temps_ecoule': 0,
+            'active': True
         }
-        self.temps_debut_session = datetime.now()
         
+        # Ajouter ou créer la matière
         if matiere not in self.matieres:
             self.matieres[matiere] = {
-                'notes_ids': [],
+                'nom': matiere,
                 'temps_total': 0,
                 'sessions': 0,
-                'quiz_scores': [],
-                'derniere_session': None,
-                'progression': {
-                    'notes_creees': 0,
-                    'quiz_reussis': 0,
-                    'temps_moyen_session': 0
-                }
+                'notes': []
             }
         
-        self.update_session_interface()
+        self.debut_session = datetime.now()
+        
+        # Démarrer le timer
+        Clock.schedule_interval(self.mettre_a_jour_timer, 1)
+        
+        self.fermer_dialog()
+        self.mettre_a_jour_stats()
+        self.afficher_message(f"Session '{matiere}' démarrée!")
 
-    def terminer_session_etude(self, *args):
-        """Termine la session actuelle"""
-        if not self.session_actuelle:
-            self.show_snackbar("Aucune session active!")
+    def mettre_a_jour_timer(self, dt):
+        if not self.session_active or not self.debut_session:
+            return False
+        
+        # Calculer le temps écoulé
+        temps_ecoule = datetime.now() - self.debut_session
+        minutes_ecoulees = int(temps_ecoule.total_seconds() / 60)
+        
+        # Mettre à jour la session
+        self.session_active['temps_ecoule'] = minutes_ecoulees
+        
+        # Afficher le temps
+        heures = minutes_ecoulees // 60
+        minutes = minutes_ecoulees % 60
+        
+        if heures > 0:
+            temps_str = f"{heures}h {minutes}min"
+        else:
+            temps_str = f"{minutes}min"
+        
+        self.label_session.text = f"Session: {self.session_active['matiere']} - {temps_str}"
+        
+        return True
+
+    def terminer_session(self, *args):
+        if not self.session_active:
+            self.afficher_message("Aucune session active!")
             return
         
-        fin = datetime.now()
-        duree = (fin - self.session_actuelle['debut']).total_seconds() / 60
+        # Arrêter le timer
+        Clock.unschedule(self.mettre_a_jour_timer)
         
-        session_complete = {
-            'date': self.session_actuelle['debut'].strftime("%Y-%m-%d %H:%M"),
-            'matiere': self.session_actuelle['matiere'],
-            'duree': round(duree, 1),
-            'note_id': self.session_actuelle.get('note_id'),
-            'activites': self.session_actuelle.get('activites', [])
-        }
+        # Calculer le temps final
+        temps_final = datetime.now() - self.debut_session
+        minutes_finales = int(temps_final.total_seconds() / 60)
         
-        self.sessions_etude.append(session_complete)
+        self.session_active['temps_ecoule'] = minutes_finales
+        self.session_active['date_fin'] = datetime.now()
+        self.session_active['active'] = False
         
-        matiere = self.session_actuelle['matiere']
-        self.matieres[matiere]['temps_total'] += duree
-        self.matieres[matiere]['sessions'] += 1
-        self.matieres[matiere]['derniere_session'] = datetime.now().strftime("%Y-%m-%d")
+        # Mettre à jour les statistiques de la matière
+        matiere = self.session_active['matiere']
+        if matiere in self.matieres:
+            self.matieres[matiere]['temps_total'] += minutes_finales
+            self.matieres[matiere]['sessions'] += 1
         
-        total_sessions = self.matieres[matiere]['sessions']
-        if total_sessions > 0:
-            self.matieres[matiere]['progression']['temps_moyen_session'] = self.matieres[matiere]['temps_total'] / total_sessions
+        # Ajouter à l'historique
+        self.sessions.append(self.session_active.copy())
         
-        self.session_actuelle = None
-        self.temps_debut_session = None
+        # Afficher le résumé
+        self.afficher_resume_session()
         
-        self.save_data()
-        self.update_session_interface()
-        self.show_snackbar(f"Session terminée: {duree:.1f} min")
+        # Nettoyer
+        self.session_active = None
+        self.debut_session = None
+        
+        self.sauvegarder_donnees()
+        self.mettre_a_jour_stats()
 
-    def enregistrer_activite(self, type_activite, details=None):
-        """Enregistre une activité"""
-        if self.session_actuelle:
-            activite = {
-                'type': type_activite,
-                'heure': datetime.now().strftime("%H:%M"),
-                'details': details
-            }
-            self.session_actuelle['activites'].append(activite)
-
-    def associer_note_matiere(self, note_id, matiere):
-        """Associe une note à une matière"""
-        if matiere not in self.matieres:
-            self.matieres[matiere] = {
-                'notes_ids': [],
-                'temps_total': 0,
-                'sessions': 0,
-                'quiz_scores': [],
-                'derniere_session': None,
-                'progression': {
-                    'notes_creees': 0,
-                    'quiz_reussis': 0,
-                    'temps_moyen_session': 0
-                }
-            }
+    def afficher_resume_session(self):
+        session = self.session_active
         
-        if note_id not in self.matieres[matiere]['notes_ids']:
-            self.matieres[matiere]['notes_ids'].append(note_id)
-            self.matieres[matiere]['progression']['notes_creees'] += 1
-
-    def associer_note_dialogue(self, *args):
-        """Dialog pour associer note à matière"""
-        if not self.note_actuelle:
-            self.show_snackbar("Sélectionnez une note!")
-            return
+        contenu = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None)
+        contenu.bind(minimum_height=contenu.setter('height'))
         
-        content = MDBoxLayout(orientation="vertical", spacing="10dp", adaptive_height=True)
+        stats_text = f"Matière: {session['matiere']}\nDurée: {session['temps_ecoule']} minutes"
         
-        self.associate_subject_field = MDTextField(hint_text="Nom de la matière")
-        content.add_widget(self.associate_subject_field)
-        
-        self.dialog = MDDialog(
-            title="Associer à une matière",
-            type="custom",
-            content_cls=content,
-            buttons=[
-                MDRaisedButton(text="ANNULER", on_release=self.close_dialog),
-                MDRaisedButton(text="ASSOCIER", on_release=self.confirm_associate_note)
-            ]
-        )
-        self.dialog.open()
-
-    def confirm_associate_note(self, *args):
-        """Confirme l'association"""
-        matiere = self.associate_subject_field.text.strip()
-        if matiere and self.note_actuelle:
-            self.associer_note_matiere(self.note_actuelle['id'], matiere)
-            self.update_evolution_panel()
-            self.show_snackbar(f"Note associée à {matiere}!")
-        self.close_dialog()
-
-    def update_session_interface(self):
-        """Met à jour l'interface de session"""
-        try:
-            if hasattr(self, 'session_label'):
-                if self.session_actuelle:
-                    duree = (datetime.now() - self.temps_debut_session).total_seconds() / 60
-                    self.session_label.text = f"Session: {self.session_actuelle['matiere']} ({duree:.0f} min)"
-                else:
-                    self.session_label.text = "Aucune session active"
-        except:
-            pass
-
-    def update_evolution_panel(self):
-        """Met à jour le panel d'évolution - AVEC STATISTIQUES QUIZ"""
-        try:
-            if not hasattr(self, 'temps_label'):
-                return
-                
-            stats = self.calculer_statistiques_globales()
-            self.temps_label.text = f"Temps total: {stats['temps_total_global']:.0f} min"
-            self.sessions_label.text = f"Sessions: {stats['sessions_total']}"
-            self.matieres_label.text = f"Matières: {stats['matieres_etudiees']}"
-            
-            # NOUVELLES STATISTIQUES QUIZ
-            self.quiz_total_label.text = f"Quiz réalisés: {stats['quiz_total']}"
-            self.quiz_moyenne_label.text = f"Moyenne quiz: {stats['moyenne_quiz_globale']:.1f}%"
-            
-            # Mettre à jour la liste des matières avec info quiz
-            if hasattr(self, 'subjects_list'):
-                self.subjects_list.clear_widgets()
-                for matiere, data in self.matieres.items():
-                    temps = data['temps_total']
-                    nb_quiz = len(data['quiz_scores'])
-                    moyenne_quiz = 0
-                    if nb_quiz > 0:
-                        moyenne_quiz = sum([q['pourcentage'] for q in data['quiz_scores']]) / nb_quiz
-                    
-                    item = ThreeLineListItem(
-                        text=matiere,
-                        secondary_text=f"Temps: {temps:.0f} min | Sessions: {data['sessions']}",
-                        tertiary_text=f"Quiz: {nb_quiz} ({moyenne_quiz:.1f}% moy.)" if nb_quiz > 0 else "Aucun quiz"
-                    )
-                    self.subjects_list.add_widget(item)
-        except Exception as e:
-            print(f"Erreur update_evolution_panel: {e}")
-
-    def calculer_statistiques_globales(self):
-        """Calcule les statistiques globales - AVEC STATISTIQUES QUIZ"""
-        stats = {
-            'temps_total_global': 0,
-            'sessions_total': len(self.sessions_etude),
-            'matieres_etudiees': len(self.matieres),
-            'notes_total': len(self.notes_liste),
-            'quiz_total': sum(len(m['quiz_scores']) for m in self.matieres.values()),
-            'moyenne_quiz_globale': 0,
-            'matiere_preferee': None,
-            'progression_semaine': self.calculer_progression_semaine()
-        }
-        
-        for session in self.sessions_etude:
-            stats['temps_total_global'] += session['duree']
-        
-        # CALCUL MOYENNE QUIZ GLOBALE
-        tous_scores = []
-        for matiere in self.matieres.values():
-            tous_scores.extend([q['pourcentage'] for q in matiere['quiz_scores']])
-        
-        if tous_scores:
-            stats['moyenne_quiz_globale'] = sum(tous_scores) / len(tous_scores)
-        
-        if self.matieres:
-            stats['matiere_preferee'] = max(self.matieres.keys(), 
-                                          key=lambda m: self.matieres[m]['temps_total'])
-        
-        return stats
-
-    def calculer_progression_semaine(self):
-        """Calcule la progression de la semaine - AVEC QUIZ"""
-        maintenant = datetime.now()
-        debut_semaine = maintenant - timedelta(days=maintenant.weekday())
-        
-        sessions_semaine = [s for s in self.sessions_etude 
-                          if datetime.strptime(s['date'], "%Y-%m-%d %H:%M") >= debut_semaine]
-        
-        # CALCUL QUIZ DE LA SEMAINE
-        quiz_semaine = 0
-        for matiere in self.matieres.values():
-            for quiz in matiere['quiz_scores']:
-                if datetime.strptime(quiz['date'], "%Y-%m-%d %H:%M") >= debut_semaine:
-                    quiz_semaine += 1
-        
-        return {
-            'sessions': len(sessions_semaine),
-            'temps': sum(s['duree'] for s in sessions_semaine),
-            'matieres': len(set(s['matiere'] for s in sessions_semaine)),
-            'quiz': quiz_semaine  # NOUVELLE STATISTIQUE
-        }
-
-    def afficher_statistiques(self, *args):
-        """Affiche les statistiques détaillées - AVEC STATISTIQUES QUIZ COMPLÈTES"""
-        if not self.notes_liste and not self.sessions_etude:
-            self.show_snackbar("Aucune donnée disponible")
-            return
-        
-        stats = self.calculer_statistiques_globales()
-        
-        # Note la plus longue
-        note_plus_longue = ""
-        if self.notes_liste:
-            note_longue = max(self.notes_liste, key=lambda n: len(n['contenu']))
-            note_plus_longue = f"Note la plus longue: {note_longue['titre']}"
-        
-        # Note la plus récente
-        note_plus_recente = ""
-        if self.notes_liste:
-            note_recente = max(self.notes_liste, key=lambda n: n['date_creation'])
-            note_plus_recente = f"Note récente: {note_recente['titre']}"
-        
-        # STATISTIQUES QUIZ DÉTAILLÉES
-        meilleur_score = 0
-        pire_score = 100
-        quiz_par_matiere = {}
-        
-        for matiere, data in self.matieres.items():
-            if data['quiz_scores']:
-                scores = [q['pourcentage'] for q in data['quiz_scores']]
-                quiz_par_matiere[matiere] = {
-                    'nombre': len(scores),
-                    'moyenne': sum(scores) / len(scores),
-                    'meilleur': max(scores),
-                    'pire': min(scores)
-                }
-                
-                meilleur_score = max(meilleur_score, max(scores))
-                pire_score = min(pire_score, min(scores))
-        
-        # Matière avec le meilleur score moyen
-        meilleure_matiere_quiz = ""
-        if quiz_par_matiere:
-            meilleure_mat = max(quiz_par_matiere.keys(), 
-                               key=lambda m: quiz_par_matiere[m]['moyenne'])
-            meilleure_matiere_quiz = f"Meilleure matière (quiz): {meilleure_mat} ({quiz_par_matiere[meilleure_mat]['moyenne']:.1f}%)"
-        
-        stats_text = f"""Statistiques Globales:
-
-📊 GÉNÉRAL:
-• Total notes: {stats['notes_total']}
-• Total sessions: {stats['sessions_total']}
-• Temps total: {stats['temps_total_global']:.1f} min
-• Matières étudiées: {stats['matieres_etudiees']}
-
-🎯 QUIZ:
-• Quiz réalisés: {stats['quiz_total']}
-• Moyenne générale: {stats['moyenne_quiz_globale']:.1f}%"""
-
-        if quiz_par_matiere:
-            stats_text += f"""
-• Meilleur score: {meilleur_score:.1f}%
-• Score le plus faible: {pire_score:.1f}%
-{meilleure_matiere_quiz}"""
-
-        stats_text += f"""
-
-📈 PROGRESSION CETTE SEMAINE:
-• Sessions: {stats['progression_semaine']['sessions']}
-• Temps: {stats['progression_semaine']['temps']:.1f} min
-• Quiz: {stats['progression_semaine']['quiz']}
-
-📚 DÉTAILS:
-{note_plus_longue}
-{note_plus_recente}"""
-
-        # Créer contenu scrollable pour les statistiques longues
-        content = MDBoxLayout(
-            orientation="vertical", 
-            spacing="10dp", 
-            adaptive_height=True,
-            size_hint_y=None
-        )
-        content.bind(minimum_height=content.setter('height'))
-        
-        # Scroll pour les statistiques
-        stats_scroll = MDScrollView(
-            size_hint=(1, None),
-            height="400dp"
-        )
+        if session.get('objectif'):
+            stats_text += f"\nObjectif: {session['objectif']}"
         
         stats_label = MDLabel(
             text=stats_text,
             font_style="Body1",
-            text_size=(None, None),
-            valign="top",
-            markup=False,
             size_hint_y=None
         )
-        stats_label.text_size = (350, None)
         stats_label.bind(texture_size=stats_label.setter('size'))
-        
-        stats_scroll.add_widget(stats_label)
-        content.add_widget(stats_scroll)
-        
-        # BOUTON POUR VOIR DÉTAILS PAR MATIÈRE
-        if quiz_par_matiere:
-            detail_btn = MDRaisedButton(
-                text="Détails par matière",
-                size_hint_y=None,
-                height="48dp"
-            )
-            detail_btn.bind(on_release=lambda x: self.afficher_details_matieres(quiz_par_matiere))
-            content.add_widget(detail_btn)
+        contenu.add_widget(stats_label)
         
         self.dialog = MDDialog(
-            title="Statistiques Complètes",
+            title="Session Terminée",
             type="custom",
-            content_cls=content,
-            size_hint=(0.9, 0.8),
-            buttons=[MDRaisedButton(text="OK", on_release=self.close_dialog)]
+            content_cls=contenu,
+            buttons=[MDRaisedButton(text="OK", on_release=self.fermer_dialog)]
         )
         self.dialog.open()
 
-    def afficher_details_matieres(self, quiz_par_matiere):
-        """Affiche les détails par matière - NOUVELLE FONCTIONNALITÉ"""
-        self.close_dialog()
+    def mettre_a_jour_stats(self):
+        # Calculer les stats totales
+        temps_total = sum(session['temps_ecoule'] for session in self.sessions)
+        nombre_sessions = len(self.sessions)
+        nombre_matieres = len(self.matieres)
         
-        content = MDBoxLayout(
-            orientation="vertical", 
-            spacing="10dp", 
-            adaptive_height=True,
-            size_hint_y=None
-        )
-        content.bind(minimum_height=content.setter('height'))
+        # Mettre à jour les labels
+        heures = temps_total // 60
+        minutes = temps_total % 60
         
-        # Scroll pour les détails
-        details_scroll = MDScrollView(
-            size_hint=(1, None),
-            height="400dp"
-        )
-        
-        details_list = MDList()
-        
-        for matiere, stats in quiz_par_matiere.items():
-            # Informations générales de la matière
-            matiere_data = self.matieres[matiere]
-            
-            detail_text = f"""📚 {matiere}
-⏱️ Temps total: {matiere_data['temps_total']:.1f} min
-📝 Sessions: {matiere_data['sessions']}
-🎯 Quiz: {stats['nombre']}
-📊 Moyenne: {stats['moyenne']:.1f}%
-🏆 Meilleur: {stats['meilleur']:.1f}%
-📉 Plus faible: {stats['pire']:.1f}%"""
-            
-            # Derniers quiz
-            derniers_quiz = sorted(matiere_data['quiz_scores'], 
-                                 key=lambda q: q['date'], reverse=True)[:3]
-            
-            if derniers_quiz:
-                detail_text += "\n\n🕒 Derniers quiz:"
-                for quiz in derniers_quiz:
-                    titre_note = quiz.get('note_titre', 'Note inconnue')
-                    detail_text += f"\n• {titre_note}: {quiz['score']}/{quiz['total']} ({quiz['pourcentage']:.1f}%)"
-            
-            item = MDCard(
-                elevation=2,
-                padding="15dp",
-                size_hint_y=None,
-                height="200dp"
-            )
-            
-            card_label = MDLabel(
-                text=detail_text,
-                font_style="Body2",
-                text_size=(None, None),
-                valign="top",
-                size_hint_y=None
-            )
-            card_label.text_size = (300, None)
-            card_label.bind(texture_size=card_label.setter('size'))
-            
-            item.add_widget(card_label)
-            details_list.add_widget(item)
-        
-        details_scroll.add_widget(details_list)
-        content.add_widget(details_scroll)
-        
-        self.dialog = MDDialog(
-            title="Détails par Matière",
-            type="custom",
-            content_cls=content,
-            size_hint=(0.9, 0.8),
-            buttons=[
-                MDRaisedButton(text="RETOUR", on_release=lambda x: self.afficher_statistiques()),
-                MDRaisedButton(text="FERMER", on_release=self.close_dialog)
-            ]
-        )
-        self.dialog.open()
-
-    def ouvrir_config_api(self, *args):
-        """Ouvre la configuration API"""
-        content = MDBoxLayout(orientation="vertical", spacing="10dp", adaptive_height=True)
-        
-        info_label = MDLabel(
-            text="Entrez votre clé API Hugging Face pour activer les fonctions IA:",
-            font_style="Body1"
-        )
-        content.add_widget(info_label)
-        
-        self.api_field = MDTextField(
-            hint_text="Clé API Hugging Face",
-            password=True,
-            helper_text="Obtenez votre clé sur huggingface.co"
-        )
-        content.add_widget(self.api_field)
-        
-        if self.api_key:
-            self.api_field.text = self.api_key
-        
-        self.dialog = MDDialog(
-            title="Configuration API",
-            type="custom",
-            content_cls=content,
-            buttons=[
-                MDRaisedButton(text="ANNULER", on_release=self.close_dialog),
-                MDRaisedButton(text="SAUVEGARDER", on_release=self.save_api_config)
-            ]
-        )
-        self.dialog.open()
-
-    def save_api_config(self, *args):
-        """Sauvegarde la clé API"""
-        self.api_key = self.api_field.text.strip()
-        self.save_data()
-        self.close_dialog()
-        
-        if self.api_key:
-            self.show_snackbar("Clé API sauvegardée!")
+        if heures > 0:
+            temps_str = f"{heures}h {minutes}min"
         else:
-            self.show_snackbar("Clé API effacée!")
+            temps_str = f"{minutes}min"
+        
+        self.label_temps.text = f"Temps total: {temps_str}"
+        self.label_sessions.text = f"Sessions: {nombre_sessions}"
+        self.label_matieres.text = f"Matières: {nombre_matieres}"
+        self.label_quiz.text = f"Quiz réalisés: {len([s for s in self.sessions if 'quiz' in str(s)])}"
+        
+        # Mettre à jour la liste des matières
+        self.mettre_a_jour_liste_matieres()
 
-    # Stockage
-    def init_storage(self):
-        """Initialise le stockage"""
-        try:
-            if platform == 'android':
-                try:
-                    from android.permissions import request_permissions, Permission
-                    request_permissions([Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE])
-                except:
-                    pass
-                
-                try:
-                    app_dir = "/storage/emulated/0/StudyHelper"
-                    if not os.path.exists(app_dir):
-                        os.makedirs(app_dir)
-                    self.store = JsonStore(os.path.join(app_dir, 'studyhelper.json'))
-                except:
-                    self.store = JsonStore('studyhelper.json')
+    def mettre_a_jour_liste_matieres(self):
+        if not hasattr(self, 'liste_matieres'):
+            return
+        
+        self.liste_matieres.clear_widgets()
+        
+        for nom, matiere in self.matieres.items():
+            temps_matiere = matiere.get('temps_total', 0)
+            sessions_matiere = matiere.get('sessions', 0)
+            
+            heures = temps_matiere // 60
+            minutes = temps_matiere % 60
+            
+            if heures > 0:
+                temps_str = f"{heures}h {minutes}min"
             else:
-                app_dir = os.path.expanduser("~/StudyHelper")
-                if not os.path.exists(app_dir):
-                    os.makedirs(app_dir)
-                self.store = JsonStore(os.path.join(app_dir, 'studyhelper.json'))
+                temps_str = f"{minutes}min"
             
-            self.load_data()
-        except Exception as e:
-            print(f"Erreur stockage: {e}")
-            try:
-                self.store = JsonStore('studyhelper_backup.json')
-            except:
-                self.store = None
+            item = TwoLineListItem(
+                text=nom,
+                secondary_text=f"{sessions_matiere} sessions - {temps_str}"
+            )
+            self.liste_matieres.add_widget(item)
 
-    def save_data(self):
-        """Sauvegarde les données"""
-        if not self.store:
-            return
-        
-        try:
-            donnees = {
-                'notes': self.notes_liste,
-                'rappels': self.rappels_liste,
-                'matieres': self.matieres,
-                'sessions_etude': self.sessions_etude,
-                'email_config': self.email_config,
-                'api_key': self.api_key
-            }
-            
-            self.store.put('app_data', **donnees)
-        except Exception as e:
-            print(f"Erreur sauvegarde: {e}")
+    # Méthodes utilitaires
+    def afficher_message(self, message):
+        # Afficher un message à l'utilisateur
+        snackbar = Snackbar(text=message)
+        snackbar.open()
 
-    def load_data(self):
-        """Charge les données"""
-        if not self.store:
-            return
-        
-        try:
-            if self.store.exists('app_data'):
-                data = self.store.get('app_data')
-                self.notes_liste = data.get('notes', [])
-                self.rappels_liste = data.get('rappels', [])
-                self.matieres = data.get('matieres', {})
-                self.sessions_etude = data.get('sessions_etude', [])
-                self.email_config.update(data.get('email_config', {}))
-                self.api_key = data.get('api_key', '')
-        except Exception as e:
-            print(f"Erreur chargement: {e}")
-
-    # Utilitaires
-    def show_snackbar(self, message):
-        """Affiche un snackbar"""
-        try:
-            Snackbar(text=message, duration=3).open()
-        except:
-            print(f"Message: {message}")
-
-    def close_dialog(self, *args):
-        """Ferme le dialog"""
+    def fermer_dialog(self, *args):
         if self.dialog:
             self.dialog.dismiss()
-            self.dialog = None
 
-    # Vérification rappels
-    def verifier_rappels(self, dt):
-        """Vérifie les rappels"""
-        maintenant = datetime.now()
-        
-        for rappel in self.rappels_liste:
-            if rappel['actif']:
-                try:
-                    date_rappel = datetime.strptime(rappel['date_heure'], "%Y-%m-%d %H:%M")
-                    if date_rappel <= maintenant:
-                        self.show_snackbar(f"Rappel: {rappel['titre']}")
-                        rappel['actif'] = False
-                except:
-                    pass
-        
-        self.update_reminders_list()
+    def sauvegarder_donnees(self):
+        # Sauvegarder de façon simple
+        try:
+            # Garder les données simples
+            data = {
+                'notes': self.notes,
+                'rappels': self.rappels,
+                'matieres': self.matieres,
+                'sessions': self.sessions
+            }
+            
+            self.store.put('donnees_app', **data)
+            
+        except Exception as e:
+            print(f"Erreur de sauvegarde: {e}")
 
-    # Cycle de vie de l'app
+    def charger_donnees(self):
+        # Charger de façon simple
+        try:
+            if self.store.exists('donnees_app'):
+                data = self.store.get('donnees_app')
+                
+                self.notes = data.get('notes', [])
+                self.rappels = data.get('rappels', [])
+                self.matieres = data.get('matieres', {})
+                self.sessions = data.get('sessions', [])
+        
+        except Exception as e:
+            print(f"Erreur de chargement: {e}")
+
     def on_start(self):
-        """Au démarrage"""
-        Clock.schedule_interval(self.verifier_rappels, 60)
-        Clock.schedule_interval(lambda dt: self.update_session_interface(), 60)
-        Clock.schedule_interval(lambda dt: self.save_data(), 300)
+        # Rien de spécial au démarrage
+        pass
 
-    def on_pause(self):
-        """En pause"""
-        self.save_data()
+    def verifier_rappels(self, dt):
+        # Pas de vérification automatique - trop compliqué pour une débutante
         return True
 
-    def on_resume(self):
-        """Reprise"""
-        try:
-            self.load_data()
-            self.update_notes_list()
-            self.update_reminders_list()
-            self.update_evolution_panel()
-        except:
-            pass
+    def on_pause(self):
+        # Sauvegarder quand l'app se met en pause
+        self.sauvegarder_donnees()
+        return True
 
     def on_stop(self):
-        """Arrêt"""
-        self.save_data()
+        # Sauvegarder avant de fermer l'app
+        self.sauvegarder_donnees()
 
 
-# Point d'entrée
-if __name__ == "__main__":
-    StudyHelperApp().run()
+# Lancement de l'application
+def main():
+    try:
+        app = StudyHelperApp()
+        app.run()
+    except Exception as e:
+        print(f"Erreur: {e}")
+
+
+if __name__ == '__main__':
+    main()
