@@ -174,7 +174,7 @@ class StudyHelperApp(MDApp):
         carte_contenu.add_widget(scroll_contenu)
         layout.add_widget(carte_contenu)
         
-        # Boutons d'action
+        # Boutons d'action - SUPPRESSION DU BOUTON SUPPRIMER ICI
         boutons_action = MDBoxLayout(
             orientation="horizontal",
             spacing="10dp",
@@ -186,9 +186,7 @@ class StudyHelperApp(MDApp):
         btn_sauver.bind(on_release=self.sauvegarder_note)
         boutons_action.add_widget(btn_sauver)
         
-        btn_supprimer = MDRaisedButton(text="Supprimer")
-        btn_supprimer.bind(on_release=self.supprimer_note)
-        boutons_action.add_widget(btn_supprimer)
+        # Le bouton supprimer a été retiré d'ici
         
         layout.add_widget(boutons_action)
         
@@ -461,6 +459,7 @@ class StudyHelperApp(MDApp):
         contenu_scroll.add_widget(contenu_label)
         contenu.add_widget(contenu_scroll)
         
+        # MODIFICATION : Ajout du bouton Supprimer dans les boutons du dialogue
         self.dialog = MDDialog(
             title=note['titre'],
             type="custom",
@@ -468,6 +467,7 @@ class StudyHelperApp(MDApp):
             size_hint=(0.9, 0.8),
             buttons=[
                 MDRaisedButton(text="Modifier", on_release=lambda x: self.charger_dans_editeur()),
+                MDRaisedButton(text="Supprimer", on_release=lambda x: self.confirmer_suppression_depuis_dialogue()),
                 MDRaisedButton(text="Fermer", on_release=self.fermer_dialog)
             ]
         )
@@ -492,7 +492,29 @@ class StudyHelperApp(MDApp):
         self.notes_trouvees = []
         self.mettre_a_jour_notes()
 
+    # MODIFICATION : Nouvelle méthode pour la suppression depuis le dialogue
+    def confirmer_suppression_depuis_dialogue(self, *args):
+        if not self.note_en_cours:
+            self.afficher_message("Aucune note sélectionnée!")
+            return
+        
+        # Fermer le dialogue actuel
+        self.fermer_dialog()
+        
+        # Ouvrir le dialogue de confirmation
+        self.dialog = MDDialog(
+            text=f"Supprimer la note '{self.note_en_cours['titre']}'?",
+            buttons=[
+                MDRaisedButton(text="Supprimer", on_release=self.confirmer_suppression),
+                MDRaisedButton(text="Annuler", on_release=self.fermer_dialog)
+            ]
+        )
+        self.dialog.open()
+
+    # MODIFICATION : Méthode simplifiée - plus besoin de vérifier s'il y a une note en cours
     def supprimer_note(self, *args):
+        # Cette méthode n'est plus utilisée depuis l'éditeur
+        # mais on la garde au cas où
         if not self.note_en_cours:
             self.afficher_message("Aucune note sélectionnée!")
             return
@@ -575,9 +597,31 @@ class StudyHelperApp(MDApp):
             type="custom",
             content_cls=contenu_dialog,
             size_hint=(0.9, 0.8),
-            buttons=[MDRaisedButton(text="Fermer", on_release=self.fermer_dialog)]
+            buttons=[
+                MDRaisedButton(text="Sauvegarder comme note", on_release=lambda x: self.sauvegarder_resume(resume)),
+                MDRaisedButton(text="Fermer", on_release=self.fermer_dialog)
+            ]
         )
         self.dialog.open()
+
+    def sauvegarder_resume(self, resume):
+        # Créer une nouvelle note avec le résumé
+        titre_original = self.note_en_cours['titre']
+        nouvelle_note = {
+            'id': len(self.notes) + 1,
+            'titre': f"Résumé: {titre_original}",
+            'contenu': resume,
+            'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M"),
+            'type': 'resume',  # Marquer comme résumé
+            'note_source_id': self.note_en_cours['id']  # Référence à la note originale
+        }
+        
+        self.notes.append(nouvelle_note)
+        self.mettre_a_jour_notes()
+        self.sauvegarder_donnees()
+        
+        self.fermer_dialog()
+        self.afficher_message(f"Résumé sauvegardé comme nouvelle note!")
 
     def creer_resume_simple(self, texte):
         # Découper le texte en phrases
